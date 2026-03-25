@@ -7,21 +7,31 @@ const API = '';
 
 // ─── Navigation ──────────────────────────────────────────
 
-function showPage(name) {
+function showPage(name, ev) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav__item').forEach(n => {
     n.classList.remove('active');
     n.removeAttribute('aria-current');
   });
-  document.getElementById(`page-${name}`).classList.add('active');
-  event.currentTarget.classList.add('active');
-  event.currentTarget.setAttribute('aria-current', 'page');
+  const page = document.getElementById(`page-${name}`);
+  if (page) page.classList.add('active');
 
-  // Charger les données de la page
-  if (name === 'home') loadHome();
-  else if (name === 'portfolio') loadPortfolio();
-  else if (name === 'programs') loadPrograms();
-  else if (name === 'profile') loadProfile();
+  // Highlight nav item if triggered by nav button
+  const target = ev?.currentTarget || (event && event.currentTarget);
+  if (target && target.classList.contains('nav__item')) {
+    target.classList.add('active');
+    target.setAttribute('aria-current', 'page');
+  }
+
+  // Scroll to top
+  window.scrollTo(0, 0);
+
+  // Load page data
+  const loaders = {
+    home: loadHome, portfolio: loadPortfolio, scan: () => {},
+    programs: loadPrograms, profile: loadProfile, legal: loadLegal,
+  };
+  if (loaders[name]) loaders[name]();
 }
 
 // ─── HOME ────────────────────────────────────────────────
@@ -62,10 +72,10 @@ async function loadHome() {
     if (pf && pf.positions?.length) {
       document.getElementById('home-portfolio').innerHTML = `
         <div class="card">
-          <div class="card-title">Portefeuille</div>
-          <div class="portfolio-total">
+          <div class="card__title">Portefeuille</div>
+          <div class="portfolio-hero">
             <div class="portfolio-hero__value">${pf.total_value_eur.toFixed(2)} EUR</div>
-            <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
+            <div class="portfolio-hero__pnl${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
               ${pf.total_pnl_eur >= 0 ? '+' : ''}${pf.total_pnl_eur.toFixed(2)} EUR
               (${pf.total_pnl_pct >= 0 ? '+' : ''}${pf.total_pnl_pct.toFixed(1)}%)
             </div>
@@ -77,7 +87,7 @@ async function loadHome() {
     if (data.programs?.length) {
       document.getElementById('home-programs').innerHTML = `
         <div class="card">
-          <div class="card-title">Programmes actifs</div>
+          <div class="card__title">Programmes actifs</div>
           ${data.programs.map(p => `
             <div class="position-row">
               <div>
@@ -89,9 +99,25 @@ async function loadHome() {
           `).join('')}
         </div>`;
     }
+    // Portfolio opinion
+    const op = data.portfolio_opinion;
+    if (op && op.messages?.length) {
+      const statusClass = op.status === 'positive' ? 'opinion-card--positive'
+        : op.status === 'warning' ? 'opinion-card--warning'
+        : op.status === 'setup' ? 'opinion-card--setup' : '';
+      document.getElementById('home-portfolio').insertAdjacentHTML('afterbegin', `
+        <div class="card opinion-card ${statusClass}">
+          <div class="card__title">Avis sur votre portefeuille</div>
+          ${op.messages.map(m => `<div class="opinion__msg">${m}</div>`).join('')}
+          ${op.actions?.length ? op.actions.map(a =>
+            `<button class="btn btn--outline btn--sm" onclick="showPage('${a.target}')" style="margin-top:8px;">${a.label}</button>`
+          ).join('') : ''}
+          ${op.disclaimer ? `<div class="opinion__disclaimer">${op.disclaimer}</div>` : ''}
+        </div>`);
+    }
   } catch (e) {
     document.getElementById('market-card').innerHTML =
-      '<div style="color:var(--red);padding:12px;">Erreur de connexion</div>';
+      '<div class="alert alert--error" style="margin:0;">Erreur de connexion au serveur</div>';
   }
 }
 
@@ -107,9 +133,9 @@ async function loadPortfolio() {
 
     let html = `
       <div class="card">
-        <div class="portfolio-total">
+        <div class="portfolio-hero">
           <div class="portfolio-hero__value">${pf.total_value_eur.toFixed(2)} EUR</div>
-          <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
+          <div class="portfolio-hero__pnl${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
             ${pf.total_pnl_eur >= 0 ? '+' : ''}${pf.total_pnl_eur.toFixed(2)} EUR
             (${pf.total_pnl_pct >= 0 ? '+' : ''}${pf.total_pnl_pct.toFixed(1)}%)
           </div>
@@ -118,7 +144,7 @@ async function loadPortfolio() {
       </div>`;
 
     if (pf.positions?.length) {
-      html += '<div class="card"><div class="card-title">Positions</div>';
+      html += '<div class="card"><div class="card__title">Positions</div>';
       pf.positions.forEach(p => {
         const pnlClass = p.pnl_eur >= 0 ? 'positive' : 'negative';
         html += `
@@ -160,7 +186,7 @@ async function runScan() {
 
     let html = `
       <div class="card" style="margin-top:12px;">
-        <div class="card-title">
+        <div class="card__title">
           ${data.summary.buy} BUY | ${data.summary.sell} SELL | ${data.summary.hold} HOLD
         </div>`;
 
@@ -183,9 +209,20 @@ async function runScan() {
     });
 
     html += '</div>';
+
+    // Bannières de risque si crypto ou levier dans les BUY
+    const hasCrypto = data.results.some(r => r.signal === 'BUY' && ['BTC','ETH','SOL','XRP','DOGE','ADA','AVAX','MATIC'].includes(r.symbol));
+    if (hasCrypto) {
+      html += '<div class="risk-banner">Crypto-actifs : produits hautement spéculatifs présentant un risque de perte totale. Ne conviennent pas à tous les profils.</div>';
+    }
+
+    html += '<div class="risk-banner risk-banner--orange">Les signaux sont générés par un algorithme et ne constituent pas un conseil en investissement personnalisé.</div>';
+
     el.innerHTML = html;
+    document.getElementById('btn-scan').textContent = 'Relancer le scan';
   } catch (e) {
-    el.innerHTML = '<div class="card"><div style="color:var(--red);">Erreur de scan</div></div>';
+    el.innerHTML = '<div class="alert alert--error">Erreur de scan. Réessayez.</div>';
+    document.getElementById('btn-scan').textContent = 'Lancer le scan';
   }
 }
 
@@ -244,7 +281,7 @@ async function showProgramDetail(id) {
     const el = document.getElementById('programs-list');
     let html = `
       <div class="card">
-        <button class="btn btn-outline" onclick="loadPrograms()" style="margin:0 0 16px;width:auto;padding:8px 16px;">
+        <button class="btn btn--outline" onclick="loadPrograms()" style="margin:0 0 16px;width:auto;padding:8px 16px;">
           Retour
         </button>
         <h2 style="font-size:20px;">${p.nom}</h2>
@@ -268,36 +305,36 @@ async function showProgramDetail(id) {
               ${a.instrument?.symbol || ''} | ${(a.banques_disponibles || []).join(', ')}
             </div>
             ${j.pourquoi_cet_actif ? `
-              <div class="justify-block">
-                <div class="justify-label">Pourquoi cet actif</div>
+              <div class="justify">
+                <div class="justify__label">Pourquoi cet actif</div>
                 ${j.pourquoi_cet_actif}
               </div>` : ''}
             ${j.pourquoi_cette_enveloppe ? `
-              <div class="justify-block">
-                <div class="justify-label">Enveloppe</div>
+              <div class="justify">
+                <div class="justify__label">Enveloppe</div>
                 ${j.pourquoi_cette_enveloppe}
               </div>` : ''}
             ${j.pourquoi_cette_banque ? `
-              <div class="justify-block">
-                <div class="justify-label">Banque</div>
+              <div class="justify">
+                <div class="justify__label">Banque</div>
                 ${j.pourquoi_cette_banque}
               </div>` : ''}
             ${j.impact_fiscal ? `
-              <div class="justify-block">
-                <div class="justify-label">Impact fiscal</div>
+              <div class="justify">
+                <div class="justify__label">Impact fiscal</div>
                 Gain estim\u00e9: ${j.impact_fiscal.gain_brut_estime?.toFixed(2) || '?'} EUR |
                 Imp\u00f4t: ${j.impact_fiscal.impot_estime?.toFixed(2) || '?'} EUR |
                 Net: ${j.impact_fiscal.gain_net_estime?.toFixed(2) || '?'} EUR
                 <br>${j.impact_fiscal.conseil || ''}
               </div>` : ''}
             ${j.risques?.length ? `
-              <div class="justify-block" style="border-left:3px solid var(--orange);padding-left:12px;">
-                <div class="justify-label">Risques</div>
+              <div class="justify justify--risk">
+                <div class="justify__label">Risques</div>
                 ${j.risques.map(r => `- ${r}`).join('<br>')}
               </div>` : ''}
             ${j.alternatives?.length ? `
-              <div class="justify-block">
-                <div class="justify-label">Alternatives</div>
+              <div class="justify">
+                <div class="justify__label">Alternatives</div>
                 ${j.alternatives.map(a => `- ${a}`).join('<br>')}
               </div>` : ''}
           </div>`;
@@ -306,7 +343,7 @@ async function showProgramDetail(id) {
 
     html += `
       <div style="padding:16px;">
-        <button class="btn btn-danger" onclick="deleteProgram('${p.id}')">Supprimer ce programme</button>
+        <button class="btn btn--danger" onclick="deleteProgram('${p.id}')">Supprimer ce programme</button>
       </div>`;
 
     el.innerHTML = html;
@@ -321,7 +358,7 @@ function showCreateProgram() {
   el.classList.remove('hidden');
   el.innerHTML = `
     <div class="card">
-      <div class="card-title">Nouveau programme</div>
+      <div class="card__title">Nouveau programme</div>
       <div class="form-group">
         <label class="form-label">Nom</label>
         <input class="form-input" id="pg-nom" value="Mon programme" />
@@ -364,8 +401,8 @@ function showCreateProgram() {
           <option value="per">PER</option>
         </select>
       </div>
-      <button class="btn btn-success" onclick="createProgram()">Cr\u00e9er le programme</button>
-      <button class="btn btn-outline" onclick="document.getElementById('program-form').style.display='none'">Annuler</button>
+      <button class="btn btn--success" onclick="createProgram()">Cr\u00e9er le programme</button>
+      <button class="btn btn--outline" onclick="document.getElementById('program-form').classList.add('hidden')">Annuler</button>
     </div>`;
 }
 
@@ -389,19 +426,25 @@ async function createProgram() {
     const data = await res.json();
     if (data.status === 'ok') {
       document.getElementById('program-form').classList.add('hidden');
+      showToast('Programme cr\u00e9\u00e9 !', 'success');
       showProgramDetail(data.program.id);
     } else {
-      alert(data.detail || 'Erreur');
+      showToast(data.detail || 'Erreur de cr\u00e9ation', 'error');
     }
   } catch (e) {
-    alert('Erreur de connexion');
+    showToast('Erreur de connexion', 'error');
   }
 }
 
 async function deleteProgram(id) {
-  if (!confirm('Supprimer ce programme ?')) return;
-  await fetch(`${API}/api/programs/${id}`, { method: 'DELETE' });
-  loadPrograms();
+  if (!confirm('Supprimer ce programme ? Cette action est irr\u00e9versible.')) return;
+  try {
+    await fetch(`${API}/api/programs/${id}`, { method: 'DELETE' });
+    showToast('Programme supprim\u00e9', 'success');
+    loadPrograms();
+  } catch (e) {
+    showToast('Erreur de suppression', 'error');
+  }
 }
 
 // ─── PROFILE ─────────────────────────────────────────────
@@ -416,7 +459,7 @@ async function loadProfile() {
       const p = data.profile;
       el.innerHTML = `
         <div class="card">
-          <div class="card-title">Votre profil</div>
+          <div class="card__title">Votre profil</div>
           <div style="line-height:2;">
             <b>${p.prenom}</b> | ${p.age} ans<br>
             TMI: ${(p.tmi * 100).toFixed(0)}% | Fiscalit\u00e9: ${p.option_fiscale?.toUpperCase()}<br>
@@ -429,8 +472,8 @@ async function loadProfile() {
           </div>
         </div>
         <div style="padding:0 16px;">
-          <button class="btn btn-outline" onclick="showProfileForm()">Modifier le profil</button>
-          <button class="btn btn-primary" onclick="testNotification()">Tester les notifications</button>
+          <button class="btn btn--outline" onclick="showProfileForm()">Modifier le profil</button>
+          <button class="btn btn--primary" onclick="testNotification()">Tester les notifications</button>
         </div>`;
     } else {
       showProfileForm();
@@ -444,7 +487,7 @@ function showProfileForm() {
   const el = document.getElementById('profile-content');
   el.innerHTML = `
     <div class="card">
-      <div class="card-title">Configuration du profil</div>
+      <div class="card__title">Configuration du profil</div>
       <div class="form-group"><label class="form-label">Pr\u00e9nom</label>
         <input class="form-input" id="pf-prenom" value="Investisseur"/></div>
       <div class="form-group"><label class="form-label">Age</label>
@@ -472,13 +515,28 @@ function showProfileForm() {
         </select></div>
       <div class="form-group"><label class="form-label">Banques (s\u00e9par\u00e9es par ,)</label>
         <input class="form-input" id="pf-banques" value="Revolut"/></div>
-      <div class="form-group"><label class="form-label">
+      <div class="form-group"><label class="form-checkbox">
         <input type="checkbox" id="pf-pea"/> J'ai un PEA</label></div>
-      <div class="form-group"><label class="form-label">
+      <div class="form-group"><label class="form-checkbox">
         <input type="checkbox" id="pf-av"/> J'ai une assurance-vie</label></div>
-      <div class="form-group"><label class="form-label">
+      <div class="form-group"><label class="form-checkbox">
         <input type="checkbox" id="pf-per"/> J'ai un PER</label></div>
-      <button class="btn btn-success" onclick="saveProfile()">Enregistrer</button>
+      <div class="divider"></div>
+      <div class="form-group"><label class="form-checkbox">
+        <input type="checkbox" id="pf-risque-ok"/> Je comprends que tout investissement comporte un risque de perte en capital</label></div>
+      <div class="form-group"><label class="form-checkbox">
+        <input type="checkbox" id="pf-complexe-ok"/> Je comprends les risques des produits complexes (crypto, ETF levier)</label></div>
+      <div class="divider"></div>
+      <div class="form-group" style="background:var(--bg3);padding:12px;border-radius:8px;">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.5;">
+          En cochant cette case, j'accepte que mes donn\u00e9es personnelles soient trait\u00e9es
+          conform\u00e9ment \u00e0 la <a href="#" onclick="showPage('legal');return false;" style="color:var(--accent);">politique de confidentialit\u00e9</a>
+          pour g\u00e9n\u00e9rer des recommandations personnalis\u00e9es.
+        </div>
+        <label class="form-checkbox">
+          <input type="checkbox" id="pf-rgpd"/> J'accepte le traitement de mes donn\u00e9es (RGPD)</label>
+      </div>
+      <button class="btn btn--success" onclick="saveProfile()">Enregistrer</button>
     </div>`;
 }
 
@@ -496,7 +554,15 @@ async function saveProfile() {
     has_assurance_vie: document.getElementById('pf-av').checked,
     has_per: document.getElementById('pf-per').checked,
     has_cto: true,
+    comprend_risque_perte: document.getElementById('pf-risque-ok').checked,
+    comprend_produits_complexes: document.getElementById('pf-complexe-ok').checked,
+    rgpd_consent: document.getElementById('pf-rgpd').checked,
   };
+
+  if (!body.rgpd_consent) {
+    showToast('Le consentement RGPD est obligatoire.', 'error');
+    return;
+  }
 
   try {
     const res = await fetch(`${API}/api/profile`, {
@@ -505,14 +571,25 @@ async function saveProfile() {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (data.status === 'ok') loadProfile();
+    if (data.status === 'ok') {
+      showToast('Profil enregistr\u00e9 !', 'success');
+      loadProfile();
+    } else {
+      showToast(data.detail || 'Erreur de sauvegarde', 'error');
+    }
   } catch (e) {
-    alert('Erreur');
+    showToast('Erreur de connexion', 'error');
   }
 }
 
 async function testNotification() {
-  await fetch(`${API}/api/push/test`, { method: 'POST' });
+  try {
+    const res = await fetch(`${API}/api/push/test`, { method: 'POST' });
+    const data = await res.json();
+    showToast(`Notification envoy\u00e9e (${data.sent || 0} destinataire(s))`, 'success');
+  } catch (e) {
+    showToast('Erreur d\'envoi de notification', 'error');
+  }
 }
 
 // ─── PUSH NOTIFICATIONS ─────────────────────────────────
@@ -589,6 +666,63 @@ function updateDate() {
 function formatNum(n) {
   if (n >= 1000) return n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
   return n.toFixed(2);
+}
+
+// ─── TOAST NOTIFICATIONS ─────────────────────────────────
+
+function showToast(message, type = 'info') {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = `toast toast--${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+// ─── LEGAL PAGE ──────────────────────────────────────────
+
+async function loadLegal() {
+  const el = document.getElementById('legal-content');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><span>Chargement...</span></div>';
+  try {
+    const res = await fetch(`${API}/api/legal`);
+    const data = await res.json();
+    let html = '';
+
+    html += `<div class="risk-banner" style="margin:12px 0;">${data.disclaimer_amf}</div>`;
+
+    const ml = data.mentions_legales;
+    html += '<div class="legal-section">';
+    html += `<div class="legal-section__title">${ml.titre}</div>`;
+    for (const [key, val] of Object.entries(ml)) {
+      if (key === 'titre') continue;
+      html += `<div style="margin-bottom:12px;"><strong>${val.label}</strong><div class="legal-section__text">${val.text}</div></div>`;
+    }
+    html += '</div>';
+
+    html += '<div class="legal-section">';
+    html += `<div class="legal-section__title">${data.cgu.titre}</div>`;
+    for (const s of data.cgu.sections) {
+      html += `<div style="margin-bottom:12px;"><strong>${s.titre}</strong><div class="legal-section__text">${s.contenu}</div></div>`;
+    }
+    html += '</div>';
+
+    html += '<div class="legal-section">';
+    html += `<div class="legal-section__title">${data.politique_confidentialite.titre}</div>`;
+    for (const s of data.politique_confidentialite.sections) {
+      html += `<div style="margin-bottom:12px;"><strong>${s.titre}</strong><div class="legal-section__text">${s.contenu}</div></div>`;
+    }
+    html += '</div>';
+
+    html += `<div class="risk-banner">${data.risk_crypto}</div>`;
+    html += `<div class="risk-banner risk-banner--orange">${data.risk_leverage}</div>`;
+    html += `<div class="legal-section"><div class="legal-section__title">Avertissement fiscal</div><div class="legal-section__text">${data.disclaimer_fiscal}</div></div>`;
+
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="alert alert--error">Impossible de charger les informations.</div>';
+  }
 }
 
 // ─── INIT ────────────────────────────────────────────────

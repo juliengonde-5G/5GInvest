@@ -694,6 +694,109 @@ body {
   }
 }
 
+/* ─── Disclaimer footer ─────────────────────────── */
+.disclaimer-footer {
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  padding: var(--space-md);
+  padding-bottom: calc(70px + var(--space-md) + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+}
+.disclaimer-footer__text {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.5;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.disclaimer-footer__links {
+  font-size: 10px;
+  margin-top: var(--space-xs);
+}
+.disclaimer-footer__links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* ─── Opinion card ──────────────────────────────── */
+.opinion-card { border-left: 4px solid var(--accent); }
+.opinion-card--positive { border-left-color: var(--green); }
+.opinion-card--warning { border-left-color: var(--orange); }
+.opinion-card--setup { border-left-color: var(--text3); }
+.opinion__msg {
+  font-size: var(--fs-sm);
+  color: var(--text2);
+  padding: var(--space-xs) 0;
+  line-height: 1.5;
+}
+.opinion__disclaimer {
+  font-size: 10px;
+  color: var(--text3);
+  margin-top: var(--space-sm);
+  font-style: italic;
+}
+
+/* ─── Risk banner ───────────────────────────────── */
+.risk-banner {
+  background: var(--red-bg);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  margin: var(--space-sm) var(--space-md);
+  font-size: 11px;
+  color: var(--red);
+  line-height: 1.5;
+}
+.risk-banner--orange {
+  background: var(--orange-bg);
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+/* ─── Toast notifications ───────────────────────── */
+.toast {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg3);
+  color: var(--text);
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  z-index: 500;
+  box-shadow: var(--shadow-lg);
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
+  max-width: 90vw;
+  text-align: center;
+}
+.toast--success { border-left: 4px solid var(--green); }
+.toast--error { border-left: 4px solid var(--red); }
+.toast--info { border-left: 4px solid var(--accent); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
+/* ─── Legal page ────────────────────────────────── */
+.legal-section {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+  margin: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+}
+.legal-section__title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  margin-bottom: var(--space-sm);
+  color: var(--text);
+}
+.legal-section__text {
+  font-size: var(--fs-sm);
+  color: var(--text2);
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
 /* ═══════════════════════════════════════════════════
    SMALL MOBILE (320px - 374px)
    ═══════════════════════════════════════════════════ */
