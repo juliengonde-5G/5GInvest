@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-900 text-gray-100 antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+  * { scrollbar-width: thin; scrollbar-color: #2d2d4a transparent; }
+}
