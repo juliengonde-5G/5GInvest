@@ -1,20 +1,33 @@
 import { useState, useEffect } from "react";
 import Dashboard from "./components/Dashboard";
 import AIInsights from "./components/AIInsights";
-import { Moon, Sun, RefreshCw } from "lucide-react";
+import PropertiesView from "./components/PropertiesView";
+import CryptoView from "./components/CryptoView";
+import CommoditiesView from "./components/CommoditiesView";
+import CashView from "./components/CashView";
+import {
+  LayoutDashboard, Home, Bitcoin, Gem, Wallet, Brain, RefreshCw,
+  ChevronLeft, ChevronRight, Bell, Settings, LogOut, Search, Menu, X,
+} from "lucide-react";
 
 const API = "/api";
+
+const NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "immo", label: "Immobilier", icon: Home },
+  { id: "crypto", label: "Crypto", icon: Bitcoin },
+  { id: "commodities", label: "Commodities", icon: Gem },
+  { id: "cash", label: "Cash", icon: Wallet },
+  { id: "ai", label: "IA Insights", icon: Brain },
+];
 
 export default function App() {
   const [data, setData] = useState(null);
   const [aiData, setAiData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [darkMode, setDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-  }, [darkMode]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => { loadDashboard(); }, []);
 
@@ -22,11 +35,8 @@ export default function App() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/dashboard`);
-      const json = await res.json();
-      setData(json);
-    } catch (e) {
-      console.error("Dashboard load error:", e);
-    }
+      setData(await res.json());
+    } catch (e) { console.error(e); }
     setLoading(false);
   }
 
@@ -34,143 +44,130 @@ export default function App() {
     setAiData(null);
     try {
       const res = await fetch(`${API}/ai/analyze`, { method: "POST" });
-      const json = await res.json();
-      setAiData(json);
+      setAiData(await res.json());
     } catch (e) {
-      console.error("AI error:", e);
-      setAiData({ error: "Analyse IA indisponible." });
+      setAiData({ error: "Analyse indisponible" });
     }
   }
 
-  const tabs = [
-    { id: "dashboard", label: "Dashboard" },
-    { id: "immo", label: "Immobilier" },
-    { id: "crypto", label: "Crypto" },
-    { id: "commodities", label: "Commodities" },
-    { id: "cash", label: "Cash" },
-    { id: "ai", label: "IA" },
-  ];
-
-  return (
-    <div className="min-h-screen bg-dark-900">
-      {/* Header */}
-      <header className="bg-dark-800 border-b border-dark-600 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
-        <h1 className="text-lg font-bold tracking-tight">
-          Portfolio <span className="text-accent-blue">Dashboard</span>
-        </h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadDashboard} className="p-2 rounded-lg hover:bg-dark-600 transition" title="Rafraîchir">
-            <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-          </button>
-          <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg hover:bg-dark-600 transition">
-            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-        </div>
-      </header>
-
-      {/* Tabs */}
-      <nav className="bg-dark-800 border-b border-dark-600 px-4 overflow-x-auto">
-        <div className="flex gap-1 min-w-max">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => { setActiveTab(t.id); if (t.id === "ai" && !aiData) loadAI(); }}
-              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap transition border-b-2 ${
-                activeTab === t.id
-                  ? "border-accent-blue text-accent-blue"
-                  : "border-transparent text-gray-400 hover:text-gray-200"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </nav>
-
-      {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {loading && !data ? (
-          <div className="flex items-center justify-center py-20">
-            <RefreshCw size={32} className="animate-spin text-accent-blue" />
-          </div>
-        ) : data ? (
-          <>
-            {activeTab === "dashboard" && <Dashboard data={data} />}
-            {activeTab === "immo" && <AssetTable title="Immobilier" items={data.real_estate} type="immo" onRefresh={loadDashboard} />}
-            {activeTab === "crypto" && <AssetTable title="Crypto" items={data.crypto} type="crypto" onRefresh={loadDashboard} />}
-            {activeTab === "commodities" && <AssetTable title="Matières premières" items={data.commodities} type="commodity" onRefresh={loadDashboard} />}
-            {activeTab === "cash" && <AssetTable title="Comptes Cash" items={data.cash} type="cash" onRefresh={loadDashboard} />}
-            {activeTab === "ai" && <AIInsights data={aiData} onRefresh={loadAI} />}
-          </>
-        ) : (
-          <div className="text-center py-20 text-gray-500">Erreur de chargement. Vérifiez le backend.</div>
-        )}
-      </main>
-
-      {/* Disclaimer */}
-      <footer className="text-center text-[10px] text-gray-600 py-4 px-4">
-        Ne constitue pas un conseil en investissement. Performances passées ≠ futures. Risque de perte en capital.
-      </footer>
-    </div>
-  );
-}
-
-// ─── Generic Asset Table ─────────────────────────────────
-
-function AssetTable({ title, items, type, onRefresh }) {
-  if (!items?.length) {
-    return (
-      <div className="text-center py-16">
-        <p className="text-gray-500 mb-4">Aucun actif {title.toLowerCase()}</p>
-        <p className="text-gray-600 text-sm">Ajoutez via l'API: POST /api/{type === "immo" ? "real-estate" : type}</p>
-      </div>
-    );
+  function navigate(id) {
+    setActiveTab(id);
+    setSidebarOpen(false);
+    if (id === "ai" && !aiData) loadAI();
   }
 
-  const totalValue = items.reduce((s, i) => s + (i.current_value || i.valeur_nette || i.solde || 0), 0);
+  const sidebarW = sidebarCollapsed ? "w-16" : "w-60";
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-bold">{title}</h2>
-        <span className="text-2xl font-bold text-accent-blue">{fmt(totalValue)}</span>
-      </div>
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* ═══ SIDEBAR ═══ */}
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
 
-      <div className="grid gap-3">
-        {items.map((item, i) => (
-          <div key={i} className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="font-semibold">{item.nom || item.symbol}</div>
-                <div className="text-sm text-gray-400 mt-1">
-                  {type === "immo" && `${item.surface_m2}m² · ${item.ville} · Rdt: ${item.rendement_brut}%`}
-                  {type === "crypto" && `${item.quantite} ${item.symbol} · PAM: ${fmt(item.prix_achat_moyen)}`}
-                  {type === "commodity" && `${item.quantite} · ${item.type_produit} · ${item.plateforme || ""}`}
-                  {type === "cash" && `${item.type_compte} · ${item.banque} · ${item.taux_interet}%`}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="font-bold">{fmt(item.current_value || item.valeur_nette || item.solde)}</div>
-                {item.pnl_eur !== undefined && (
-                  <div className={`text-sm font-medium ${item.pnl_eur >= 0 ? "text-accent-green" : "text-accent-red"}`}>
-                    {item.pnl_eur >= 0 ? "+" : ""}{fmt(item.pnl_eur)} ({item.pnl_pct >= 0 ? "+" : ""}{item.pnl_pct}%)
-                  </div>
-                )}
-                {item.cashflow_mensuel !== undefined && (
-                  <div className={`text-sm ${item.cashflow_mensuel >= 0 ? "text-accent-green" : "text-accent-red"}`}>
-                    {item.cashflow_mensuel >= 0 ? "+" : ""}{item.cashflow_mensuel}€/mois
-                  </div>
-                )}
-              </div>
-            </div>
+      <aside className={`
+        fixed lg:relative inset-y-0 left-0 z-50 flex flex-col
+        bg-sidebar border-r border-sidebar-border
+        transition-all duration-200 ease-in-out
+        ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+        ${sidebarW}
+      `}>
+        {/* Logo */}
+        <div className="flex items-center gap-2 px-4 h-14 border-b border-sidebar-border shrink-0">
+          {!sidebarCollapsed && (
+            <>
+              <div className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center text-xs font-bold text-black">5G</div>
+              <span className="font-semibold text-sm">Portfolio</span>
+            </>
+          )}
+          {sidebarCollapsed && (
+            <div className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center text-xs font-bold text-black mx-auto">5G</div>
+          )}
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
+          {!sidebarCollapsed && (
+            <div className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-dark">Portfolio</div>
+          )}
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => navigate(id)}
+              className={`sidebar-link w-full ${activeTab === id ? "active" : ""} ${sidebarCollapsed ? "justify-center px-0" : ""}`}
+              title={sidebarCollapsed ? label : undefined}
+            >
+              <Icon size={18} />
+              {!sidebarCollapsed && <span>{label}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {/* Collapse toggle (desktop) */}
+        <div className="hidden lg:flex border-t border-sidebar-border p-2">
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="sidebar-link w-full justify-center"
+          >
+            {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </div>
+      </aside>
+
+      {/* ═══ MAIN ═══ */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top bar */}
+        <header className="flex items-center justify-between h-14 px-4 border-b border-border shrink-0 bg-background">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-1.5 rounded-lg hover:bg-white/5">
+              <Menu size={20} />
+            </button>
+            <h1 className="text-sm font-semibold">
+              {NAV_ITEMS.find(n => n.id === activeTab)?.label || "Dashboard"}
+            </h1>
           </div>
-        ))}
+          <div className="flex items-center gap-1">
+            <button onClick={loadDashboard} className="p-2 rounded-lg hover:bg-white/5 transition" title="Rafraîchir">
+              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button className="p-2 rounded-lg hover:bg-white/5 transition relative">
+              <Bell size={16} />
+              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+            </button>
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-500 ml-2" />
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="max-w-[1400px] mx-auto p-4 lg:p-6">
+            {loading && !data ? (
+              <div className="flex items-center justify-center py-32">
+                <RefreshCw size={28} className="animate-spin text-muted" />
+              </div>
+            ) : data ? (
+              <>
+                {activeTab === "dashboard" && <Dashboard data={data} onNavigate={navigate} />}
+                {activeTab === "immo" && <PropertiesView items={data.real_estate} onRefresh={loadDashboard} />}
+                {activeTab === "crypto" && <CryptoView items={data.crypto} onRefresh={loadDashboard} />}
+                {activeTab === "commodities" && <CommoditiesView items={data.commodities} onRefresh={loadDashboard} />}
+                {activeTab === "cash" && <CashView items={data.cash} onRefresh={loadDashboard} />}
+                {activeTab === "ai" && <AIInsights data={aiData} onRefresh={loadAI} />}
+              </>
+            ) : (
+              <div className="text-center py-32 text-muted">
+                Erreur de chargement. Vérifiez le backend.
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Footer disclaimer */}
+        <footer className="text-center text-[9px] text-[#3f3f46] py-2 px-4 border-t border-border">
+          Ne constitue pas un conseil en investissement. Performances passées ≠ performances futures. Risque de perte en capital.
+        </footer>
       </div>
     </div>
   );
-}
-
-function fmt(n) {
-  if (n == null) return "—";
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 }
