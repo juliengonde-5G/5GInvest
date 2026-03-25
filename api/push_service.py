@@ -144,21 +144,31 @@ class PushService:
 
         # Générer de nouvelles clés
         try:
-            from py_vapid import Vapid
-            vapid = Vapid()
-            vapid.generate_keys()
+            from pywebpush import webpush
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives import serialization
+            import base64
+
+            private_key = ec.generate_private_key(ec.SECP256R1())
+            priv_bytes = private_key.private_numbers().private_value.to_bytes(32, "big")
+            pub_bytes = private_key.public_key().public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            )
+            priv_b64 = base64.urlsafe_b64encode(priv_bytes).rstrip(b"=").decode()
+            pub_b64 = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+
             keys = {
-                "public_key": vapid.public_key_urlsafe_base64,
-                "private_key": vapid.private_key_urlsafe_base64,
-                "contact": "mailto:admin@5ginvest.local",
+                "public_key": pub_b64,
+                "private_key": priv_b64,
+                "contact": "mailto:admin@5ginvest.fr",
             }
         except ImportError:
-            # Fallback: clés placeholder (l'utilisateur devra les générer)
-            logger.warning("py_vapid non installé. Générez les clés VAPID manuellement.")
+            logger.warning("cryptography non installé. Générez les clés VAPID manuellement.")
             keys = {
                 "public_key": "GENERATE_WITH_vapid_gen",
                 "private_key": "GENERATE_WITH_vapid_gen",
-                "contact": "mailto:admin@5ginvest.local",
+                "contact": "mailto:admin@5ginvest.fr",
             }
 
         with open(VAPID_FILE, "w") as f:
