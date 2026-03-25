@@ -154,12 +154,34 @@ class FiscalEngine:
                       f"Le capital versé est imposé au barème IR ({self.tmi*100:.0f}%)",
         }
 
-    def _impot_crypto(self, gain: float) -> dict:
-        """Crypto: PFU 30%, exonéré si cessions < 305€/an."""
+    def _impot_crypto(self, gain: float, total_cessions_annuelles: float = 0) -> dict:
+        """
+        Crypto: PFU 30%, exonéré si total des cessions annuelles < 305€/an.
+        NB: Le seuil de 305€ porte sur le montant TOTAL des cessions (ventes),
+        PAS sur la plus-value. Si total_cessions_annuelles < 305€, exonération totale.
+        """
+        # Si l'utilisateur a vendu moins de 305€ de crypto dans l'année -> exonéré
+        if total_cessions_annuelles > 0 and total_cessions_annuelles < CRYPTO_SEUIL_EXONERATION:
+            return {
+                "gain_brut": round(gain, 2),
+                "impot": 0,
+                "gain_net": round(gain, 2),
+                "taux_effectif": 0,
+                "enveloppe": "Crypto (CTO)",
+                "detail": (
+                    f"Exonéré: total cessions annuelles ({total_cessions_annuelles:.0f}€) "
+                    f"< seuil {CRYPTO_SEUIL_EXONERATION}€. Aucun impôt dû."
+                ),
+            }
+
         impot = gain * PFU_TAUX
         detail = f"Crypto: PFU {PFU_TAUX*100}% (flat tax)"
-        if gain < CRYPTO_SEUIL_EXONERATION:
-            detail += f" - NB: si total cessions annuelles < {CRYPTO_SEUIL_EXONERATION}€, exonéré"
+        if total_cessions_annuelles == 0:
+            detail += (
+                f". NB: si le total de vos cessions annuelles (montant vendu, "
+                f"pas la plus-value) est < {CRYPTO_SEUIL_EXONERATION}€, "
+                f"vous êtes exonéré. Vérifiez ce montant."
+            )
 
         return {
             "gain_brut": round(gain, 2),

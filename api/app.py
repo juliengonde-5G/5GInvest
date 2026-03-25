@@ -20,6 +20,7 @@ from config.user_profile import load_profile, save_profile
 from market.data_fetcher import fetch_stock_data, fetch_crypto_history, fetch_current_price
 from strategy.short_term import analyze_asset, scan_all_assets, get_buy_recommendations
 from strategy.justifier import justifier_allocation
+from api.legal import get_all_legal, DISCLAIMER_AMF, RISK_WARNING_CRYPTO, RISK_WARNING_LEVERAGE, DISCLAIMER_FISCAL
 from alerts.alert_engine import AlertEngine
 from portfolio.tracker import PortfolioTracker
 from banks.catalog import BANKS, get_bank, get_user_banks
@@ -48,10 +49,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://5ginvest.fr", "https://www.5ginvest.fr", "http://localhost:8000"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Servir les fichiers statiques PWA
@@ -84,6 +85,13 @@ class ProfileUpdate(BaseModel):
     objectif_principal: str = "trading"
     horizon_global: str = "court"
     experience_bourse: str = "debutant"
+    # MiFID II suitability
+    comprend_risque_perte: bool = False
+    comprend_produits_complexes: bool = False
+    epargne_precaution_mois: int = 0  # mois d'épargne de sécurité
+    # RGPD
+    rgpd_consent: bool = False
+    rgpd_consent_date: Optional[str] = None
 
 
 class ProgramCreate(BaseModel):
@@ -140,6 +148,7 @@ async def get_home():
             "status": p["status"],
         } for p in programs],
         "portfolio_summary": _get_portfolio_summary(),
+        "portfolio_opinion": _get_portfolio_opinion(profile, programs),
     }
 
 
@@ -168,10 +177,73 @@ async def update_profile(data: ProfileUpdate):
         profile["taux_imposition_gains"] = 0.30
     else:
         profile["taux_imposition_gains"] = profile["tmi"] + 0.172
-    profile["created_at"] = datetime.datetime.now().isoformat()
+    if not profile.get("rgpd_consent"):
+        raise HTTPException(400, "Le consentement RGPD est requis pour sauvegarder votre profil.")
+    profile["rgpd_consent_date"] = datetime.datetime.now().isoformat()
+    profile["created_at"] = profile.get("created_at", datetime.datetime.now().isoformat())
     profile["updated_at"] = datetime.datetime.now().isoformat()
     save_profile(profile)
     return {"status": "ok", "profile": _safe_profile(profile)}
+
+
+@app.delete("/api/profile")
+async def delete_profile():
+    """RGPD: droit à l'effacement (article 17)."""
+    from config.paths import PROFILE_FILE
+    if os.path.exists(PROFILE_FILE):
+        os.remove(PROFILE_FILE)
+    return {"status": "ok", "message": "Profil supprimé."}
+
+
+@app.get("/api/profile/export")
+async def export_profile():
+    """RGPD: droit à la portabilité (article 20)."""
+    profile = load_profile()
+    if not profile:
+        raise HTTPException(404, "Aucun profil trouvé.")
+    return profile
+
+
+@app.get("/api/profile/fiscal")
+async def get_fiscal_summary():
+    """Données fiscales pour le frontend (séparé du profil safe)."""
+    profile = load_profile()
+    if not profile:
+        raise HTTPException(404, "Profil requis.")
+    return {
+        "tmi_pct": round(profile.get("tmi", 0.30) * 100),
+        "taux_gains_pct": round(profile.get("taux_imposition_gains", 0.30) * 100, 1),
+        "option_fiscale": profile.get("option_fiscale", "pfu"),
+        "disclaimer": "Simulation indicative. Ne constitue pas un conseil fiscal. Consultez un professionnel.",
+    }
+
+
+@app.post("/api/suitability/check")
+async def check_suitability(data: dict):
+    """MiFID II: vérifie l'adéquation avant stratégie agressive."""
+    risque = data.get("risque", "equilibre")
+    experience = data.get("experience_bourse", "debutant")
+    comprend_risque = data.get("comprend_risque_perte", False)
+    comprend_complexe = data.get("comprend_produits_complexes", False)
+
+    warnings = []
+    blocked = False
+
+    if risque == "agressif" and experience == "debutant":
+        warnings.append(
+            "Le profil agressif inclut des ETF à levier et 30% de crypto-actifs. "
+            "Ces produits complexes ne sont pas recommandés pour les débutants."
+        )
+        if not comprend_risque or not comprend_complexe:
+            blocked = True
+            warnings.append("Vous devez confirmer comprendre les risques de perte et les produits complexes.")
+
+    if risque in ("dynamique", "agressif") and not comprend_risque:
+        warnings.append(
+            "Les profils dynamique et agressif impliquent un risque significatif de perte en capital."
+        )
+
+    return {"warnings": warnings, "blocked": blocked, "risque": risque}
 
 
 # ─── BANKS ────────────────────────────────────────────────
@@ -379,6 +451,24 @@ async def get_alerts():
     return alert_engine.get_summary()
 
 
+# ─── LEGAL ────────────────────────────────────────────────
+
+@app.get("/api/legal")
+async def get_legal():
+    """Toutes les pages légales en un seul appel."""
+    return get_all_legal()
+
+
+@app.get("/api/legal/disclaimer")
+async def get_disclaimer():
+    return {
+        "amf": DISCLAIMER_AMF,
+        "crypto": RISK_WARNING_CRYPTO,
+        "leverage": RISK_WARNING_LEVERAGE,
+        "fiscal": DISCLAIMER_FISCAL,
+    }
+
+
 # ─── PWA SERVING ──────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -403,10 +493,13 @@ async def serve_manifest():
 
 # ─── HELPERS ──────────────────────────────────────────────
 
+PROFILE_SENSITIVE_KEYS = {
+    "revenu_annuel_net", "tmi", "taux_imposition_gains", "nb_parts_fiscales",
+}
+
 def _safe_profile(profile: dict) -> dict:
-    """Retourne le profil sans données sensibles."""
-    safe = {k: v for k, v in profile.items()}
-    return safe
+    """Retourne le profil sans données fiscales sensibles (RGPD minimisation)."""
+    return {k: v for k, v in profile.items() if k not in PROFILE_SENSITIVE_KEYS}
 
 
 def _fetch_indices_fast() -> list:
@@ -503,3 +596,88 @@ def _get_portfolio_summary() -> dict:
         if p:
             prices[sym] = p
     return portfolio.get_portfolio_value(prices)
+
+
+def _get_portfolio_opinion(profile: dict, programs: list) -> dict:
+    """Génère une opinion personnalisée sur le portefeuille."""
+    opinion = {"status": "neutral", "messages": [], "actions": []}
+
+    portfolio = PortfolioTracker()
+    positions = portfolio.get_all_positions()
+
+    if not positions:
+        opinion["status"] = "setup"
+        opinion["messages"].append("Aucune position. Créez un programme et enregistrez vos achats.")
+        opinion["actions"].append({"label": "Créer un programme", "target": "programs"})
+        return opinion
+
+    # Calculer le P&L
+    pf_summary = _get_portfolio_summary()
+    pnl_pct = pf_summary.get("total_pnl_pct", 0)
+
+    # Statut global
+    if pnl_pct > 5:
+        opinion["status"] = "positive"
+        opinion["messages"].append(
+            f"Votre portefeuille progresse de {pnl_pct:+.1f}%. "
+            "Vérifiez si un take-profit est atteint sur certaines positions."
+        )
+    elif pnl_pct < -3:
+        opinion["status"] = "warning"
+        opinion["messages"].append(
+            f"Votre portefeuille recule de {pnl_pct:.1f}%. "
+            "Vérifiez les stop-loss. Ne paniquez pas si l'horizon est long terme."
+        )
+    else:
+        opinion["status"] = "neutral"
+        opinion["messages"].append(
+            f"Portefeuille stable ({pnl_pct:+.1f}%). Pas d'action urgente."
+        )
+
+    # Vérification de concentration
+    for p in pf_summary.get("positions", []):
+        if p.get("weight_pct", 0) > 40:
+            opinion["messages"].append(
+                f"Concentration: {p['symbol']} représente {p['weight_pct']:.0f}% du portefeuille. "
+                "Envisagez de diversifier."
+            )
+            opinion["actions"].append({"label": f"Voir {p['symbol']}", "target": "portfolio"})
+
+    # Vérification exposition
+    asset_classes = {}
+    for sym, pos in positions.items():
+        ac = pos.get("asset_class", "autre")
+        asset_classes[ac] = asset_classes.get(ac, 0) + 1
+
+    crypto_count = asset_classes.get("crypto", 0)
+    total_count = sum(asset_classes.values())
+    if total_count > 0 and crypto_count / total_count > 0.5:
+        opinion["messages"].append(
+            "Plus de 50% de vos positions sont en crypto. Risque de volatilité élevé."
+        )
+
+    # Cash dormant
+    cash = pf_summary.get("cash_eur", 0)
+    total = pf_summary.get("total_value_eur", 1)
+    if total > 0 and cash / total > 0.4:
+        opinion["messages"].append(
+            f"{cash:.0f}€ de cash non investi ({cash/total*100:.0f}% du portefeuille). "
+            "Lancez un scan pour trouver des opportunités."
+        )
+        opinion["actions"].append({"label": "Scanner", "target": "scan"})
+
+    # Programmes sans positions
+    active_programs = [p for p in programs if p.get("status") == "active"]
+    if active_programs and not positions:
+        opinion["messages"].append(
+            f"Vous avez {len(active_programs)} programme(s) actif(s) mais aucune position. "
+            "Exécutez les achats recommandés."
+        )
+
+    # Disclaimer obligatoire
+    opinion["disclaimer"] = (
+        "Cette analyse est automatique et ne constitue pas un conseil en investissement. "
+        "Les performances passées ne préjugent pas des performances futures."
+    )
+
+    return opinion
