@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  5ginvest:
+    build: .
+    container_name: 5ginvest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8042:8000"   # Uniquement localhost, Nginx fait le proxy
+    volumes:
+      - ./data:/app/data         # Persistance (profil, portfolio, programmes)
+    environment:
+      - TZ=Europe/Paris
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/home"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

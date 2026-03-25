@@ -9,7 +9,7 @@ import datetime
 from typing import Optional
 
 
-PROFILE_FILE = "user_profile.json"
+from config.paths import PROFILE_FILE
 
 # Tranches d'imposition IR 2025 (revenus 2024)
 TRANCHES_IR_2025 = [

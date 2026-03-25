@@ -1,0 +1,12 @@
+.git
+__pycache__
+*.pyc
+data/
+*.log
+push_subscriptions.json
+vapid_keys.json
+user_profile.json
+portfolio.json
+programs.json
+alerts.log
+.env

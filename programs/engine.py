@@ -14,7 +14,7 @@ from banks.catalog import get_bank, select_best_bank, get_user_banks
 from fiscal.engine import FiscalEngine
 
 
-PROGRAMS_FILE = "programs.json"
+from config.paths import PROGRAMS_FILE
 
 # Modèles d'allocation selon le profil de risque et la durée
 ALLOCATION_MODELS = {

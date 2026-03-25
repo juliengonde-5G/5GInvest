@@ -24,7 +24,8 @@ class AlertEngine:
     }
 
     def __init__(self, log_file: str = None):
-        self.log_file = log_file or ALERT_CONFIG.get("log_file", "alerts.log")
+        from config.paths import ALERTS_LOG
+        self.log_file = log_file or ALERTS_LOG
         self.pending_alerts: List[dict] = []  # Alertes en attente (hors horaires)
         self.sent_alerts: List[dict] = []
 

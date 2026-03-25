@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#3b82f6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>5GInvest</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/png" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <h1>5GInvest</h1>
+    <div class="subtitle" id="header-date"></div>
+  </div>
+
+  <!-- Notification prompt -->
+  <div class="notif-prompt" id="notif-prompt" style="display:none;">
+    <div style="margin-bottom:8px;">Activez les notifications pour recevoir les alertes de trading</div>
+    <button class="btn btn-primary" onclick="requestNotifPermission()" style="width:auto;padding:10px 24px;">
+      Activer les notifications
+    </button>
+  </div>
+
+  <!-- ═══ PAGE: HOME ═══ -->
+  <div class="page active" id="page-home">
+    <div class="section-title">Marchés</div>
+    <div class="card" id="market-card">
+      <div class="loading"><div class="spinner"></div>Chargement...</div>
+    </div>
+    <div class="card" id="commentary-card" style="display:none;">
+      <div class="card-title">Analyse</div>
+      <div class="commentary" id="commentary"></div>
+    </div>
+    <div id="home-portfolio"></div>
+    <div id="home-programs"></div>
+  </div>
+
+  <!-- ═══ PAGE: PORTFOLIO ═══ -->
+  <div class="page" id="page-portfolio">
+    <div class="section-title">Portefeuille</div>
+    <div id="portfolio-content">
+      <div class="loading"><div class="spinner"></div>Chargement...</div>
+    </div>
+  </div>
+
+  <!-- ═══ PAGE: SCAN ═══ -->
+  <div class="page" id="page-scan">
+    <div class="section-title">Scanner</div>
+    <button class="btn btn-primary" onclick="runScan()" style="margin:0 16px;width:calc(100% - 32px);">
+      Lancer le scan
+    </button>
+    <div id="scan-results"></div>
+  </div>
+
+  <!-- ═══ PAGE: PROGRAMS ═══ -->
+  <div class="page" id="page-programs">
+    <div class="section-title">Programmes</div>
+    <button class="btn btn-primary" onclick="showCreateProgram()" style="margin:0 16px;width:calc(100% - 32px);">
+      + Nouveau programme
+    </button>
+    <div id="programs-list"></div>
+    <div id="program-form" style="display:none;"></div>
+  </div>
+
+  <!-- ═══ PAGE: PROFILE ═══ -->
+  <div class="page" id="page-profile">
+    <div class="section-title">Profil</div>
+    <div id="profile-content">
+      <div class="loading"><div class="spinner"></div>Chargement...</div>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <button class="nav-item active" onclick="showPage('home')">
+      <span class="nav-icon">&#x1f3e0;</span>Accueil
+    </button>
+    <button class="nav-item" onclick="showPage('portfolio')">
+      <span class="nav-icon">&#x1f4bc;</span>Portfolio
+    </button>
+    <button class="nav-item" onclick="showPage('scan')">
+      <span class="nav-icon">&#x1f50d;</span>Scanner
+    </button>
+    <button class="nav-item" onclick="showPage('programs')">
+      <span class="nav-icon">&#x1f4ca;</span>Programmes
+    </button>
+    <button class="nav-item" onclick="showPage('profile')">
+      <span class="nav-icon">&#x2699;&#xfe0f;</span>Profil
+    </button>
+  </nav>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -9,7 +9,7 @@ import os
 from typing import List, Dict, Optional
 
 
-PORTFOLIO_FILE = "portfolio.json"
+from config.paths import PORTFOLIO_FILE
 
 
 class PortfolioTracker:
