@@ -9,9 +9,13 @@ const API = '';
 
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.nav__item').forEach(n => {
+    n.classList.remove('active');
+    n.removeAttribute('aria-current');
+  });
   document.getElementById(`page-${name}`).classList.add('active');
   event.currentTarget.classList.add('active');
+  event.currentTarget.setAttribute('aria-current', 'page');
 
   // Charger les données de la page
   if (name === 'home') loadHome();
@@ -33,10 +37,10 @@ async function loadHome() {
       document.getElementById('market-card').innerHTML = data.market.indices.map(idx => `
         <div class="index-row">
           <div>
-            <div class="index-name">${idx.nom}</div>
+            <div class="index__name">${idx.nom}</div>
           </div>
-          <div class="index-price">${formatNum(idx.price)}</div>
-          <div class="index-change ${idx.change_pct >= 0 ? 'up' : 'down'}">
+          <div class="index__price">${formatNum(idx.price)}</div>
+          <div class="index__change ${idx.change_pct >= 0 ? 'index__change--up' : 'index__change--down'}">
             ${idx.change_pct >= 0 ? '+' : ''}${idx.change_pct.toFixed(2)}%
           </div>
         </div>
@@ -48,7 +52,7 @@ async function loadHome() {
 
     // Commentary
     if (data.market?.commentary?.length) {
-      document.getElementById('commentary-card').style.display = 'block';
+      document.getElementById('commentary-card').classList.remove('hidden');
       document.getElementById('commentary').innerHTML =
         data.market.commentary.map(c => `<div style="margin-bottom:6px;">${c}</div>`).join('');
     }
@@ -60,8 +64,8 @@ async function loadHome() {
         <div class="card">
           <div class="card-title">Portefeuille</div>
           <div class="portfolio-total">
-            <div class="portfolio-value">${pf.total_value_eur.toFixed(2)} EUR</div>
-            <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'positive' : 'negative'}">
+            <div class="portfolio-hero__value">${pf.total_value_eur.toFixed(2)} EUR</div>
+            <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
               ${pf.total_pnl_eur >= 0 ? '+' : ''}${pf.total_pnl_eur.toFixed(2)} EUR
               (${pf.total_pnl_pct >= 0 ? '+' : ''}${pf.total_pnl_pct.toFixed(1)}%)
             </div>
@@ -104,8 +108,8 @@ async function loadPortfolio() {
     let html = `
       <div class="card">
         <div class="portfolio-total">
-          <div class="portfolio-value">${pf.total_value_eur.toFixed(2)} EUR</div>
-          <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'positive' : 'negative'}">
+          <div class="portfolio-hero__value">${pf.total_value_eur.toFixed(2)} EUR</div>
+          <div class="portfolio-pnl ${pf.total_pnl_eur >= 0 ? 'portfolio-hero__pnl--positive' : 'portfolio-hero__pnl--negative'}">
             ${pf.total_pnl_eur >= 0 ? '+' : ''}${pf.total_pnl_eur.toFixed(2)} EUR
             (${pf.total_pnl_pct >= 0 ? '+' : ''}${pf.total_pnl_pct.toFixed(1)}%)
           </div>
@@ -124,7 +128,7 @@ async function loadPortfolio() {
               <div class="position-detail">${p.invested.toFixed(2)} EUR investi | ${p.weight_pct.toFixed(1)}%</div>
             </div>
             <div class="position-pnl">
-              <div class="portfolio-pnl ${pnlClass}" style="font-size:15px;">
+              <div class="portfolio-hero__pnl ${pnlClass}" style="font-size:15px;">
                 ${p.pnl_eur >= 0 ? '+' : ''}${p.pnl_eur.toFixed(2)} EUR
               </div>
               <div style="font-size:12px;color:var(--text2);">
@@ -170,7 +174,7 @@ async function runScan() {
             </div>
           </div>
           <div style="text-align:right;">
-            <span class="signal-badge signal-${r.signal}">${r.signal}</span>
+            <span class="badge badge--${r.signal.toLowerCase()}">${r.signal}</span>
             <div style="font-size:12px;color:var(--text2);margin-top:4px;">
               ${r.price ? formatNum(r.price) : ''}
             </div>
@@ -258,7 +262,7 @@ async function showProgramDetail(id) {
           <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
               <div style="font-weight:700;">${a.instrument?.nom || a.categorie}</div>
-              <span class="signal-badge signal-BUY">${a.pct}% = ${a.montant_eur.toFixed(2)} EUR</span>
+              <span class="badge badge--buy">${a.pct}% = ${a.montant_eur.toFixed(2)} EUR</span>
             </div>
             <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">
               ${a.instrument?.symbol || ''} | ${(a.banques_disponibles || []).join(', ')}
@@ -306,7 +310,7 @@ async function showProgramDetail(id) {
       </div>`;
 
     el.innerHTML = html;
-    document.getElementById('program-form').style.display = 'none';
+    document.getElementById('program-form').classList.add('hidden');
   } catch (e) {
     console.error(e);
   }
@@ -314,7 +318,7 @@ async function showProgramDetail(id) {
 
 function showCreateProgram() {
   const el = document.getElementById('program-form');
-  el.style.display = 'block';
+  el.classList.remove('hidden');
   el.innerHTML = `
     <div class="card">
       <div class="card-title">Nouveau programme</div>
@@ -384,7 +388,7 @@ async function createProgram() {
     });
     const data = await res.json();
     if (data.status === 'ok') {
-      document.getElementById('program-form').style.display = 'none';
+      document.getElementById('program-form').classList.add('hidden');
       showProgramDetail(data.program.id);
     } else {
       alert(data.detail || 'Erreur');
@@ -521,7 +525,7 @@ async function initPush() {
     const permission = Notification.permission;
 
     if (permission === 'default') {
-      document.getElementById('notif-prompt').style.display = 'block';
+      document.getElementById('notif-prompt').classList.remove('hidden');
     } else if (permission === 'granted') {
       await subscribePush(reg);
     }
@@ -532,7 +536,7 @@ async function initPush() {
 
 async function requestNotifPermission() {
   const permission = await Notification.requestPermission();
-  document.getElementById('notif-prompt').style.display = 'none';
+  document.getElementById('notif-prompt').classList.add('hidden');
 
   if (permission === 'granted') {
     const reg = await navigator.serviceWorker.ready;
