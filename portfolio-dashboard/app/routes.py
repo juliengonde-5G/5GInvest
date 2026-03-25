@@ -4,9 +4,10 @@ CRUD pour chaque classe d'actifs + dashboard + AI.
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, RealEstate, CryptoPosition, CommodityPosition, CashAccount, Transaction, PortfolioSnapshot
+from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, Transaction, PortfolioSnapshot
 from market_data import get_crypto_prices, get_commodity_price, get_commodity_prices
 from ai_analyzer import analyze_portfolio
+from dvf_service import geocode_address, estimate_price_m2, get_dvf_transactions, get_dvf_history_10y
 from datetime import date
 
 api = Blueprint("api", __name__, url_prefix="/api")
@@ -110,6 +111,53 @@ def take_snapshot():
     return jsonify({"status": "ok", "snapshot": snap.to_dict()})
 
 
+# ─── GEOCODAGE + DVF ─────────────────────────────────────
+
+@api.route("/geo/geocode")
+def api_geocode():
+    """Géocode une adresse → lat/lon/code_insee."""
+    adresse = request.args.get("adresse", "")
+    cp = request.args.get("code_postal", "")
+    ville = request.args.get("ville", "")
+    return jsonify(geocode_address(adresse, cp, ville))
+
+
+@api.route("/geo/dvf/estimate")
+def api_dvf_estimate():
+    """Estimation prix/m² DVF pour un secteur."""
+    return jsonify(estimate_price_m2(
+        code_insee=request.args.get("code_insee"),
+        code_postal=request.args.get("code_postal"),
+        lat=float(request.args["lat"]) if request.args.get("lat") else None,
+        lon=float(request.args["lon"]) if request.args.get("lon") else None,
+        type_bien=request.args.get("type_bien", "appartement"),
+        surface_m2=float(request.args.get("surface_m2", 0)),
+    ))
+
+
+@api.route("/geo/dvf/transactions")
+def api_dvf_transactions():
+    """Transactions DVF récentes autour d'une localisation."""
+    txs = get_dvf_transactions(
+        code_insee=request.args.get("code_insee"),
+        code_postal=request.args.get("code_postal"),
+        lat=float(request.args["lat"]) if request.args.get("lat") else None,
+        lon=float(request.args["lon"]) if request.args.get("lon") else None,
+        type_bien=request.args.get("type_bien"),
+    )
+    return jsonify(txs[:50])
+
+
+@api.route("/geo/dvf/history")
+def api_dvf_history():
+    """Historique DVF 10 ans pour graphique."""
+    return jsonify(get_dvf_history_10y(
+        code_insee=request.args.get("code_insee"),
+        code_postal=request.args.get("code_postal"),
+        type_bien=request.args.get("type_bien", "appartement"),
+    ))
+
+
 # ─── IMMOBILIER CRUD ──────────────────────────────────────
 
 @api.route("/real-estate", methods=["GET"])
@@ -118,25 +166,92 @@ def list_real_estate():
     return jsonify([p.to_dict() for p in props])
 
 
+@api.route("/real-estate/<int:id>", methods=["GET"])
+def get_real_estate(id):
+    prop = RealEstate.query.get_or_404(id)
+    return jsonify(prop.to_dict())
+
+
 @api.route("/real-estate", methods=["POST"])
 def create_real_estate():
     data = request.get_json()
+
+    # Auto-géocodage si adresse fournie
+    lat = data.get("latitude")
+    lon = data.get("longitude")
+    code_insee = None
+    if not lat and data.get("adresse"):
+        geo = geocode_address(data.get("adresse", ""), data.get("code_postal", ""), data.get("ville", ""))
+        if "error" not in geo:
+            lat = geo["latitude"]
+            lon = geo["longitude"]
+            code_insee = geo.get("code_insee")
+            if not data.get("ville"):
+                data["ville"] = geo.get("ville", "")
+            if not data.get("code_postal"):
+                data["code_postal"] = geo.get("code_postal", "")
+
+    # Auto-estimation DVF si surface fournie
+    surface = data.get("surface_habitable_m2") or data.get("surface_carrez_m2", 0)
+    prix_m2_dvf = 0
+    valeur_estimee = data.get("valeur_estimee", 0)
+    if surface > 0 and not valeur_estimee:
+        est = estimate_price_m2(
+            code_insee=code_insee, code_postal=data.get("code_postal"),
+            lat=lat, lon=lon,
+            type_bien=data.get("type_bien", "appartement"),
+            surface_m2=surface,
+        )
+        prix_m2_dvf = est.get("prix_m2_ajuste", 0)
+        valeur_estimee = est.get("estimation_valeur", 0)
+
+    # Calcul prix achat total
+    prix_net = data.get("prix_achat_net", 0)
+    frais_notaire = data.get("frais_notaire", 0)
+    frais_agence = data.get("frais_agence", 0)
+    prix_total = data.get("prix_achat_total") or (prix_net + frais_notaire + frais_agence)
+
     prop = RealEstate(
         nom=data["nom"],
         adresse=data.get("adresse"),
-        ville=data.get("ville"),
+        complement_adresse=data.get("complement_adresse"),
         code_postal=data.get("code_postal"),
+        ville=data.get("ville"),
+        latitude=lat,
+        longitude=lon,
         type_bien=data.get("type_bien"),
-        surface_m2=data.get("surface_m2", 0),
-        prix_achat=data.get("prix_achat", 0),
-        date_achat=date.fromisoformat(data["date_achat"]) if data.get("date_achat") else None,
-        prix_m2_estime=data.get("prix_m2_estime", 0),
-        valeur_estimee=data.get("valeur_estimee") or data.get("surface_m2", 0) * data.get("prix_m2_estime", 0),
-        travaux_realises=data.get("travaux_realises", 0),
-        loyer_mensuel=data.get("loyer_mensuel", 0),
-        charges_mensuelles=data.get("charges_mensuelles", 0),
-        credit_mensuel=data.get("credit_mensuel", 0),
-        capital_restant_du=data.get("capital_restant_du", 0),
+        usage=data.get("usage"),
+        etage=data.get("etage"),
+        nb_pieces=data.get("nb_pieces"),
+        nb_chambres=data.get("nb_chambres"),
+        nb_sdb=data.get("nb_sdb"),
+        annee_construction=data.get("annee_construction"),
+        dpe=data.get("dpe"),
+        surface_habitable_m2=data.get("surface_habitable_m2", 0),
+        surface_carrez_m2=data.get("surface_carrez_m2", 0),
+        surface_terrain_m2=data.get("surface_terrain_m2", 0),
+        surface_annexes_m2=data.get("surface_annexes_m2", 0),
+        nb_parking=data.get("nb_parking", 0),
+        mode_detention=data.get("mode_detention", "pleine_propriete"),
+        quote_part_pct=data.get("quote_part_pct", 100),
+        date_acquisition=date.fromisoformat(data["date_acquisition"]) if data.get("date_acquisition") else None,
+        date_mise_en_location=date.fromisoformat(data["date_mise_en_location"]) if data.get("date_mise_en_location") else None,
+        prix_achat_net=prix_net,
+        frais_notaire=frais_notaire,
+        frais_agence=frais_agence,
+        prix_achat_total=prix_total,
+        prix_m2_dvf=prix_m2_dvf,
+        prix_m2_estime=data.get("prix_m2_estime") or prix_m2_dvf,
+        valeur_estimee=valeur_estimee,
+        date_derniere_estimation=date.today(),
+        taxe_fonciere_annuelle=data.get("taxe_fonciere_annuelle", 0),
+        charges_copro_mensuelles=data.get("charges_copro_mensuelles", 0),
+        assurance_pno_mensuelle=data.get("assurance_pno_mensuelle", 0),
+        gestion_locative_pct=data.get("gestion_locative_pct", 0),
+        autres_charges_mensuelles=data.get("autres_charges_mensuelles", 0),
+        loyer_mensuel_hc=data.get("loyer_mensuel_hc", 0),
+        charges_locataire_mensuel=data.get("charges_locataire_mensuel", 0),
+        regime_fiscal=data.get("regime_fiscal"),
         notes=data.get("notes"),
     )
     db.session.add(prop)
@@ -148,14 +263,28 @@ def create_real_estate():
 def update_real_estate(id):
     prop = RealEstate.query.get_or_404(id)
     data = request.get_json()
-    for key in ["nom", "adresse", "ville", "code_postal", "type_bien", "surface_m2",
-                "prix_achat", "prix_m2_estime", "valeur_estimee", "travaux_realises",
-                "loyer_mensuel", "charges_mensuelles", "credit_mensuel",
-                "capital_restant_du", "notes"]:
+
+    updatable = [
+        "nom", "adresse", "complement_adresse", "code_postal", "ville",
+        "latitude", "longitude", "type_bien", "usage", "etage",
+        "nb_pieces", "nb_chambres", "nb_sdb", "annee_construction", "dpe",
+        "surface_habitable_m2", "surface_carrez_m2", "surface_terrain_m2",
+        "surface_annexes_m2", "nb_parking", "mode_detention", "quote_part_pct",
+        "prix_achat_net", "frais_notaire", "frais_agence", "prix_achat_total",
+        "prix_m2_dvf", "prix_m2_estime", "valeur_estimee",
+        "montant_travaux_total", "travaux_deductibles",
+        "taxe_fonciere_annuelle", "charges_copro_mensuelles",
+        "assurance_pno_mensuelle", "gestion_locative_pct", "autres_charges_mensuelles",
+        "loyer_mensuel_hc", "charges_locataire_mensuel", "regime_fiscal", "notes",
+    ]
+    for key in updatable:
         if key in data:
             setattr(prop, key, data[key])
-    if "date_achat" in data and data["date_achat"]:
-        prop.date_achat = date.fromisoformat(data["date_achat"])
+
+    for date_field in ["date_acquisition", "date_mise_en_location", "date_derniere_estimation"]:
+        if date_field in data and data[date_field]:
+            setattr(prop, date_field, date.fromisoformat(data[date_field]))
+
     db.session.commit()
     return jsonify(prop.to_dict())
 
@@ -166,6 +295,163 @@ def delete_real_estate(id):
     db.session.delete(prop)
     db.session.commit()
     return jsonify({"status": "ok"})
+
+
+@api.route("/real-estate/<int:id>/refresh-estimate", methods=["POST"])
+def refresh_estimate(id):
+    """Rafraîchit l'estimation DVF d'un bien."""
+    prop = RealEstate.query.get_or_404(id)
+    surface = prop.surface_carrez_m2 or prop.surface_habitable_m2
+    if surface <= 0:
+        return jsonify({"error": "Surface requise pour l'estimation"}), 400
+
+    est = estimate_price_m2(
+        code_postal=prop.code_postal,
+        lat=prop.latitude, lon=prop.longitude,
+        type_bien=prop.type_bien or "appartement",
+        surface_m2=surface,
+    )
+
+    if est.get("prix_m2_ajuste"):
+        prop.prix_m2_dvf = est["prix_m2_ajuste"]
+        prop.prix_m2_estime = est["prix_m2_ajuste"]
+        prop.valeur_estimee = est["estimation_valeur"]
+        prop.date_derniere_estimation = date.today()
+        db.session.commit()
+
+    return jsonify({**est, "property": prop.to_dict()})
+
+
+# ─── PRÊTS IMMOBILIERS ───────────────────────────────────
+
+@api.route("/real-estate/<int:prop_id>/loans", methods=["GET"])
+def list_loans(prop_id):
+    RealEstate.query.get_or_404(prop_id)
+    loans = RealEstateLoan.query.filter_by(property_id=prop_id).all()
+    return jsonify([l.to_dict() for l in loans])
+
+
+@api.route("/real-estate/<int:prop_id>/loans", methods=["POST"])
+def create_loan(prop_id):
+    RealEstate.query.get_or_404(prop_id)
+    data = request.get_json()
+    loan = RealEstateLoan(
+        property_id=prop_id,
+        nom=data.get("nom", "Prêt"),
+        type_pret=data.get("type_pret", "classique"),
+        banque=data.get("banque"),
+        montant_emprunte=data.get("montant_emprunte", 0),
+        taux_nominal=data.get("taux_nominal", 0),
+        taux_assurance=data.get("taux_assurance", 0),
+        duree_mois=data.get("duree_mois", 240),
+        date_debut=date.fromisoformat(data["date_debut"]) if data.get("date_debut") else None,
+        mensualite_hors_assurance=data.get("mensualite_hors_assurance", 0),
+        mensualite_assurance=data.get("mensualite_assurance", 0),
+        capital_restant_du=data.get("capital_restant_du", 0),
+        en_cours=data.get("en_cours", True),
+        notes=data.get("notes"),
+    )
+    db.session.add(loan)
+    db.session.commit()
+    return jsonify(loan.to_dict()), 201
+
+
+@api.route("/real-estate/<int:prop_id>/loans/<int:loan_id>", methods=["PUT"])
+def update_loan(prop_id, loan_id):
+    loan = RealEstateLoan.query.filter_by(id=loan_id, property_id=prop_id).first_or_404()
+    data = request.get_json()
+    for key in ["nom", "type_pret", "banque", "montant_emprunte", "taux_nominal",
+                "taux_assurance", "duree_mois", "mensualite_hors_assurance",
+                "mensualite_assurance", "capital_restant_du", "en_cours", "notes"]:
+        if key in data:
+            setattr(loan, key, data[key])
+    if "date_debut" in data and data["date_debut"]:
+        loan.date_debut = date.fromisoformat(data["date_debut"])
+    db.session.commit()
+    return jsonify(loan.to_dict())
+
+
+@api.route("/real-estate/<int:prop_id>/loans/<int:loan_id>", methods=["DELETE"])
+def delete_loan(prop_id, loan_id):
+    loan = RealEstateLoan.query.filter_by(id=loan_id, property_id=prop_id).first_or_404()
+    db.session.delete(loan)
+    db.session.commit()
+    return jsonify({"status": "ok"})
+
+
+# ─── TRAVAUX ─────────────────────────────────────────────
+
+@api.route("/real-estate/<int:prop_id>/works", methods=["GET"])
+def list_works(prop_id):
+    RealEstate.query.get_or_404(prop_id)
+    works = RealEstateWork.query.filter_by(property_id=prop_id).all()
+    return jsonify([w.to_dict() for w in works])
+
+
+@api.route("/real-estate/<int:prop_id>/works", methods=["POST"])
+def create_work(prop_id):
+    prop = RealEstate.query.get_or_404(prop_id)
+    data = request.get_json()
+    work = RealEstateWork(
+        property_id=prop_id,
+        description=data.get("description"),
+        type_travaux=data.get("type_travaux"),
+        montant=data.get("montant", 0),
+        date_travaux=date.fromisoformat(data["date_travaux"]) if data.get("date_travaux") else None,
+        deductible_fiscalement=data.get("deductible_fiscalement", False),
+        notes=data.get("notes"),
+    )
+    db.session.add(work)
+    # Mettre à jour le total travaux sur le bien
+    prop.montant_travaux_total = sum(w.montant for w in prop.works) + work.montant
+    prop.travaux_deductibles = any(w.deductible_fiscalement for w in prop.works) or work.deductible_fiscalement
+    db.session.commit()
+    return jsonify(work.to_dict()), 201
+
+
+@api.route("/real-estate/<int:prop_id>/works/<int:work_id>", methods=["DELETE"])
+def delete_work(prop_id, work_id):
+    work = RealEstateWork.query.filter_by(id=work_id, property_id=prop_id).first_or_404()
+    prop = RealEstate.query.get_or_404(prop_id)
+    db.session.delete(work)
+    db.session.flush()
+    prop.montant_travaux_total = sum(w.montant for w in prop.works)
+    db.session.commit()
+    return jsonify({"status": "ok"})
+
+
+# ─── RÉSUMÉ IMMOBILIER (pour page d'accueil immo) ────────
+
+@api.route("/real-estate/summary")
+def real_estate_summary():
+    """Résumé du patrimoine immobilier + historique DVF."""
+    props = RealEstate.query.all()
+
+    total_valeur = sum(p.valeur_estimee for p in props)
+    total_nette = sum(p.valeur_nette for p in props)
+    total_credit = sum(p.capital_restant_du_total for p in props)
+    total_loyers = sum(p.loyer_mensuel_hc for p in props)
+    total_cashflow = sum(p.cashflow_mensuel for p in props)
+
+    # Historique DVF agrégé (premier bien comme référence)
+    dvf_history = []
+    if props:
+        ref = props[0]
+        dvf_history = get_dvf_history_10y(
+            code_postal=ref.code_postal,
+            type_bien=ref.type_bien or "appartement",
+        )
+
+    return jsonify({
+        "nb_biens": len(props),
+        "total_valeur_estimee": round(total_valeur, 2),
+        "total_valeur_nette": round(total_nette, 2),
+        "total_credit_restant": round(total_credit, 2),
+        "total_loyers_mensuels": round(total_loyers, 2),
+        "total_cashflow_mensuel": round(total_cashflow, 2),
+        "biens": [p.to_dict() for p in props],
+        "dvf_history": dvf_history,
+    })
 
 
 # ─── CRYPTO CRUD ──────────────────────────────────────────
