@@ -4,11 +4,11 @@ CRUD pour chaque classe d'actifs + dashboard + AI.
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, Transaction, PortfolioSnapshot
+from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, Transaction, PortfolioSnapshot, InvestmentPath, InvestmentPosition, Arbitrage
 from market_data import get_crypto_prices, get_commodity_price, get_commodity_prices
 from ai_analyzer import analyze_portfolio
 from dvf_service import geocode_address, estimate_price_m2, get_dvf_transactions, get_dvf_history_10y
-from datetime import date
+from datetime import date, datetime
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
@@ -452,6 +452,256 @@ def real_estate_summary():
         "biens": [p.to_dict() for p in props],
         "dvf_history": dvf_history,
     })
+
+
+# ─── PARCOURS D'INVESTISSEMENT ────────────────────────────
+
+@api.route("/paths", methods=["GET"])
+def list_paths():
+    paths = InvestmentPath.query.all()
+    return jsonify([p.to_dict() for p in paths])
+
+
+@api.route("/paths/<int:id>", methods=["GET"])
+def get_path(id):
+    path = InvestmentPath.query.get_or_404(id)
+    return jsonify(path.to_dict())
+
+
+@api.route("/paths", methods=["POST"])
+def create_path():
+    data = request.get_json()
+    path = InvestmentPath(
+        nom=data["nom"],
+        description=data.get("description"),
+        profil_risque=data.get("profil_risque", "equilibre"),
+        reactivite=data.get("reactivite", "moderee"),
+        maturite_mois=data.get("maturite_mois", 12),
+        mise_depart=data.get("mise_depart", 0),
+        objectif_sortie=data.get("objectif_sortie", 0),
+        objectif_rendement_pct=data.get("objectif_rendement_pct", 0),
+        banque=data.get("banque"),
+        enveloppe=data.get("enveloppe", "cto"),
+        date_ouverture_enveloppe=date.fromisoformat(data["date_ouverture_enveloppe"]) if data.get("date_ouverture_enveloppe") else None,
+        valeur_actuelle=data.get("mise_depart", 0),
+    )
+    db.session.add(path)
+    db.session.commit()
+    return jsonify(path.to_dict()), 201
+
+
+@api.route("/paths/<int:id>", methods=["PUT"])
+def update_path(id):
+    path = InvestmentPath.query.get_or_404(id)
+    data = request.get_json()
+    for key in ["nom", "description", "profil_risque", "reactivite", "maturite_mois",
+                "mise_depart", "objectif_sortie", "objectif_rendement_pct",
+                "banque", "enveloppe", "statut", "valeur_actuelle"]:
+        if key in data:
+            setattr(path, key, data[key])
+    if "date_ouverture_enveloppe" in data and data["date_ouverture_enveloppe"]:
+        path.date_ouverture_enveloppe = date.fromisoformat(data["date_ouverture_enveloppe"])
+    _recalculate_path(path)
+    db.session.commit()
+    return jsonify(path.to_dict())
+
+
+@api.route("/paths/<int:id>", methods=["DELETE"])
+def delete_path(id):
+    path = InvestmentPath.query.get_or_404(id)
+    db.session.delete(path)
+    db.session.commit()
+    return jsonify({"status": "ok"})
+
+
+# ─── POSITIONS DANS UN PARCOURS ───────────────────────────
+
+@api.route("/paths/<int:path_id>/positions", methods=["GET"])
+def list_positions(path_id):
+    InvestmentPath.query.get_or_404(path_id)
+    positions = InvestmentPosition.query.filter_by(path_id=path_id).all()
+    return jsonify([p.to_dict() for p in positions])
+
+
+@api.route("/paths/<int:path_id>/positions", methods=["POST"])
+def create_position(path_id):
+    path = InvestmentPath.query.get_or_404(path_id)
+    data = request.get_json()
+    pos = InvestmentPosition(
+        path_id=path_id,
+        symbol=data["symbol"].upper(),
+        nom=data.get("nom"),
+        type_produit=data.get("type_produit", "etf"),
+        quantite=data.get("quantite", 0),
+        prix_entree=data.get("prix_entree", 0),
+        prix_actuel=data.get("prix_actuel") or data.get("prix_entree", 0),
+        date_entree=date.fromisoformat(data["date_entree"]) if data.get("date_entree") else date.today(),
+        objectif_cours_haut=data.get("objectif_cours_haut"),
+        objectif_cours_bas=data.get("objectif_cours_bas"),
+        staking_actif=data.get("staking_actif", False),
+        notes=data.get("notes"),
+    )
+    db.session.add(pos)
+    _recalculate_path(path)
+    db.session.commit()
+    return jsonify(pos.to_dict()), 201
+
+
+@api.route("/paths/<int:path_id>/positions/<int:pos_id>", methods=["PUT"])
+def update_position(path_id, pos_id):
+    pos = InvestmentPosition.query.filter_by(id=pos_id, path_id=path_id).first_or_404()
+    data = request.get_json()
+    for key in ["symbol", "nom", "type_produit", "quantite", "prix_entree",
+                "prix_actuel", "prix_sortie", "objectif_cours_haut",
+                "objectif_cours_bas", "staking_actif", "rewards_cumules", "notes"]:
+        if key in data:
+            setattr(pos, key, data[key])
+    for df in ["date_entree", "date_sortie"]:
+        if df in data and data[df]:
+            setattr(pos, df, date.fromisoformat(data[df]))
+    path = InvestmentPath.query.get(path_id)
+    _recalculate_path(path)
+    db.session.commit()
+    return jsonify(pos.to_dict())
+
+
+@api.route("/paths/<int:path_id>/positions/<int:pos_id>/sell", methods=["POST"])
+def sell_position(path_id, pos_id):
+    """L'utilisateur a vendu : il renseigne le prix de sortie."""
+    pos = InvestmentPosition.query.filter_by(id=pos_id, path_id=path_id).first_or_404()
+    data = request.get_json()
+    pos.prix_sortie = data.get("prix_sortie", pos.prix_actuel)
+    pos.date_sortie = date.fromisoformat(data["date_sortie"]) if data.get("date_sortie") else date.today()
+    path = InvestmentPath.query.get(path_id)
+    _recalculate_path(path)
+    db.session.commit()
+    return jsonify(pos.to_dict())
+
+
+# ─── ARBITRAGES ───────────────────────────────────────────
+
+@api.route("/paths/<int:path_id>/arbitrages", methods=["GET"])
+def list_arbitrages(path_id):
+    InvestmentPath.query.get_or_404(path_id)
+    arbs = Arbitrage.query.filter_by(path_id=path_id).order_by(Arbitrage.date_proposition.desc()).all()
+    return jsonify([a.to_dict() for a in arbs])
+
+
+@api.route("/paths/<int:path_id>/arbitrages", methods=["POST"])
+def create_arbitrage(path_id):
+    """Créer une proposition d'arbitrage (par le système ou manuellement)."""
+    InvestmentPath.query.get_or_404(path_id)
+    data = request.get_json()
+    arb = Arbitrage(
+        path_id=path_id,
+        type_action=data.get("type_action", "buy"),
+        symbol=data.get("symbol"),
+        nom_produit=data.get("nom_produit"),
+        montant_suggere=data.get("montant_suggere", 0),
+        prix_cible=data.get("prix_cible"),
+        raison=data.get("raison"),
+        symbol_remplacement=data.get("symbol_remplacement"),
+        nom_remplacement=data.get("nom_remplacement"),
+    )
+    db.session.add(arb)
+    db.session.commit()
+    return jsonify(arb.to_dict()), 201
+
+
+@api.route("/paths/<int:path_id>/arbitrages/<int:arb_id>", methods=["PUT"])
+def update_arbitrage(path_id, arb_id):
+    """Accepter/refuser/exécuter un arbitrage."""
+    arb = Arbitrage.query.filter_by(id=arb_id, path_id=path_id).first_or_404()
+    data = request.get_json()
+    if "statut" in data:
+        arb.statut = data["statut"]
+    if "prix_execution" in data:
+        arb.prix_execution = data["prix_execution"]
+        arb.date_execution = datetime.utcnow() if not data.get("date_execution") else None
+    if "date_execution" in data and data["date_execution"]:
+        from datetime import datetime as dt
+        arb.date_execution = dt.fromisoformat(data["date_execution"])
+    db.session.commit()
+    return jsonify(arb.to_dict())
+
+
+# ─── OPINION QUOTIDIENNE ─────────────────────────────────
+
+@api.route("/paths/<int:path_id>/opinion")
+def path_opinion(path_id):
+    """Opinion de l'analyste sur un parcours (appelé en page d'accueil)."""
+    path = InvestmentPath.query.get_or_404(path_id)
+    positions = InvestmentPosition.query.filter_by(path_id=path_id).filter(InvestmentPosition.date_sortie.is_(None)).all()
+
+    opinions = []
+    alertes = []
+
+    if not positions:
+        opinions.append(f"Parcours '{path.nom}' : aucune position. Lancez votre premier investissement.")
+        return jsonify({"opinions": opinions, "alertes": alertes})
+
+    # Analyse par position
+    for pos in positions:
+        # Vérifier objectifs
+        if pos.objectif_atteint == "take_profit":
+            alertes.append({
+                "type": "take_profit",
+                "symbol": pos.symbol,
+                "message": f"{pos.symbol} a atteint l'objectif haut ({pos.objectif_cours_haut}€). Prenez vos gains.",
+                "urgence": "haute",
+            })
+        elif pos.objectif_atteint == "stop_loss":
+            alertes.append({
+                "type": "stop_loss",
+                "symbol": pos.symbol,
+                "message": f"{pos.symbol} a franchi le stop loss ({pos.objectif_cours_bas}€). Coupez la position.",
+                "urgence": "critique",
+            })
+
+        # P&L analyse
+        if pos.pnl_pct > 10:
+            opinions.append(f"{pos.symbol} : +{pos.pnl_pct:.1f}%. Belle performance. Sécurisez une partie des gains ?")
+        elif pos.pnl_pct < -5:
+            opinions.append(f"{pos.symbol} : {pos.pnl_pct:.1f}%. Sous pression. Vérifiez votre conviction.")
+
+    # Parcours global
+    pnl = path.rendement_actuel_pct
+    if pnl > 0:
+        opinions.append(f"Parcours '{path.nom}' : +{pnl:.1f}% de rendement. Progression vers l'objectif : {path.progression_objectif_pct:.0f}%.")
+    elif pnl < -3:
+        opinions.append(f"Parcours '{path.nom}' en recul ({pnl:.1f}%). Maintenez la stratégie si votre horizon le permet.")
+
+    if path.progression_objectif_pct >= 100:
+        alertes.append({
+            "type": "objectif_atteint",
+            "symbol": None,
+            "message": f"Objectif du parcours '{path.nom}' atteint ! Sécurisez vos gains.",
+            "urgence": "haute",
+        })
+
+    return jsonify({
+        "path_id": path.id,
+        "nom": path.nom,
+        "rendement_pct": pnl,
+        "progression_pct": path.progression_objectif_pct,
+        "opinions": opinions,
+        "alertes": alertes,
+        "nb_positions": len(positions),
+        "disclaimer": "Analyse automatique. Ne constitue pas un conseil en investissement.",
+    })
+
+
+# ─── HELPER ──────────────────────────────────────────────
+
+def _recalculate_path(path):
+    """Recalcule la valeur actuelle et le P&L d'un parcours."""
+    positions = InvestmentPosition.query.filter_by(path_id=path.id).all()
+    total = sum(p.valeur_actuelle for p in positions if p.date_sortie is None)
+    # Ajouter les gains réalisés (positions vendues)
+    realise = sum(p.pnl_eur for p in positions if p.date_sortie is not None)
+    path.valeur_actuelle = round(total, 2)
+    path.pnl_eur = round(total - path.mise_depart + realise, 2)
+    path.pnl_pct = round(path.pnl_eur / path.mise_depart * 100, 2) if path.mise_depart > 0 else 0
 
 
 # ─── CRYPTO CRUD ──────────────────────────────────────────

@@ -387,6 +387,210 @@ class CryptoPosition(db.Model):
         }
 
 
+# ─── PARCOURS D'INVESTISSEMENT ────────────────────────────
+
+class InvestmentPath(db.Model):
+    """Parcours d'investissement autonome avec objectif et profil."""
+    __tablename__ = "investment_paths"
+
+    id = db.Column(db.Integer, primary_key=True)
+    nom = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+
+    # Profil
+    profil_risque = db.Column(db.String(30))  # prudent, equilibre, dynamique, agressif, sur_mesure
+    reactivite = db.Column(db.String(30))  # passive, moderee, active, tres_active
+    maturite_mois = db.Column(db.Integer, default=12)  # horizon en mois
+
+    # Budget
+    mise_depart = db.Column(db.Float, default=0)
+    objectif_sortie = db.Column(db.Float, default=0)  # montant cible à atteindre
+    objectif_rendement_pct = db.Column(db.Float, default=0)  # rendement annuel visé
+
+    # Banque / enveloppe
+    banque = db.Column(db.String(100))
+    enveloppe = db.Column(db.String(50))  # cto, pea, assurance_vie, per
+    date_ouverture_enveloppe = db.Column(db.Date)  # impact fiscal
+
+    # État
+    statut = db.Column(db.String(20), default="actif")  # actif, pause, cloture
+    valeur_actuelle = db.Column(db.Float, default=0)
+    pnl_eur = db.Column(db.Float, default=0)
+    pnl_pct = db.Column(db.Float, default=0)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relations
+    positions = db.relationship("InvestmentPosition", backref="path", cascade="all,delete-orphan", lazy=True)
+    arbitrages = db.relationship("Arbitrage", backref="path", cascade="all,delete-orphan", lazy=True)
+
+    @property
+    def rendement_actuel_pct(self):
+        if self.mise_depart > 0:
+            return round((self.valeur_actuelle - self.mise_depart) / self.mise_depart * 100, 2)
+        return 0
+
+    @property
+    def progression_objectif_pct(self):
+        if self.objectif_sortie > 0 and self.mise_depart > 0:
+            gain_cible = self.objectif_sortie - self.mise_depart
+            gain_actuel = self.valeur_actuelle - self.mise_depart
+            return round(gain_actuel / gain_cible * 100, 1) if gain_cible > 0 else 0
+        return 0
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "nom": self.nom,
+            "description": self.description,
+            "profil_risque": self.profil_risque,
+            "reactivite": self.reactivite,
+            "maturite_mois": self.maturite_mois,
+            "mise_depart": self.mise_depart,
+            "objectif_sortie": self.objectif_sortie,
+            "objectif_rendement_pct": self.objectif_rendement_pct,
+            "banque": self.banque,
+            "enveloppe": self.enveloppe,
+            "date_ouverture_enveloppe": self.date_ouverture_enveloppe.isoformat() if self.date_ouverture_enveloppe else None,
+            "statut": self.statut,
+            "valeur_actuelle": self.valeur_actuelle,
+            "pnl_eur": self.pnl_eur,
+            "pnl_pct": self.pnl_pct,
+            "rendement_actuel_pct": self.rendement_actuel_pct,
+            "progression_objectif_pct": self.progression_objectif_pct,
+            "positions": [p.to_dict() for p in self.positions],
+            "arbitrages": [a.to_dict() for a in sorted(self.arbitrages, key=lambda x: x.date_proposition or date.min, reverse=True)[:10]],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class InvestmentPosition(db.Model):
+    """Position dans un parcours d'investissement."""
+    __tablename__ = "investment_positions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    path_id = db.Column(db.Integer, db.ForeignKey("investment_paths.id"), nullable=False)
+
+    symbol = db.Column(db.String(30), nullable=False)  # IWDA.AS, BTC, NVDA...
+    nom = db.Column(db.String(200))
+    type_produit = db.Column(db.String(30))  # etf, action, crypto, obligation, fonds_euro, opcvm
+    quantite = db.Column(db.Float, default=0)
+    prix_entree = db.Column(db.Float, default=0)  # prix moyen d'achat
+    prix_actuel = db.Column(db.Float, default=0)
+    date_entree = db.Column(db.Date)
+    date_sortie = db.Column(db.Date)  # null si toujours en portefeuille
+    prix_sortie = db.Column(db.Float)  # renseigné par l'utilisateur à la vente
+
+    # Objectifs
+    objectif_cours_haut = db.Column(db.Float)  # take profit
+    objectif_cours_bas = db.Column(db.Float)  # stop loss
+    alerte_envoyee = db.Column(db.Boolean, default=False)
+
+    # Staking / rewards (crypto)
+    staking_actif = db.Column(db.Boolean, default=False)
+    rewards_cumules = db.Column(db.Float, default=0)
+
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def investi(self):
+        return round(self.quantite * self.prix_entree, 2)
+
+    @property
+    def valeur_actuelle(self):
+        if self.date_sortie and self.prix_sortie:
+            return round(self.quantite * self.prix_sortie, 2)
+        return round(self.quantite * self.prix_actuel, 2)
+
+    @property
+    def pnl_eur(self):
+        return round(self.valeur_actuelle - self.investi + self.rewards_cumules, 2)
+
+    @property
+    def pnl_pct(self):
+        if self.investi > 0:
+            return round(self.pnl_eur / self.investi * 100, 2)
+        return 0
+
+    @property
+    def objectif_atteint(self):
+        if self.objectif_cours_haut and self.prix_actuel >= self.objectif_cours_haut:
+            return "take_profit"
+        if self.objectif_cours_bas and self.prix_actuel <= self.objectif_cours_bas:
+            return "stop_loss"
+        return None
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "symbol": self.symbol,
+            "nom": self.nom,
+            "type_produit": self.type_produit,
+            "quantite": self.quantite,
+            "prix_entree": self.prix_entree,
+            "prix_actuel": self.prix_actuel,
+            "date_entree": self.date_entree.isoformat() if self.date_entree else None,
+            "date_sortie": self.date_sortie.isoformat() if self.date_sortie else None,
+            "prix_sortie": self.prix_sortie,
+            "investi": self.investi,
+            "valeur_actuelle": self.valeur_actuelle,
+            "pnl_eur": self.pnl_eur,
+            "pnl_pct": self.pnl_pct,
+            "objectif_cours_haut": self.objectif_cours_haut,
+            "objectif_cours_bas": self.objectif_cours_bas,
+            "objectif_atteint": self.objectif_atteint,
+            "staking_actif": self.staking_actif,
+            "rewards_cumules": self.rewards_cumules,
+            "en_portefeuille": self.date_sortie is None,
+        }
+
+
+class Arbitrage(db.Model):
+    """Proposition d'arbitrage (achat/vente) par le système."""
+    __tablename__ = "arbitrages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    path_id = db.Column(db.Integer, db.ForeignKey("investment_paths.id"), nullable=False)
+
+    type_action = db.Column(db.String(20))  # buy, sell, switch, rebalance
+    symbol = db.Column(db.String(30))
+    nom_produit = db.Column(db.String(200))
+    montant_suggere = db.Column(db.Float, default=0)
+    prix_cible = db.Column(db.Float)
+    raison = db.Column(db.Text)  # justification de l'arbitrage
+
+    # Remplacement (si switch)
+    symbol_remplacement = db.Column(db.String(30))
+    nom_remplacement = db.Column(db.String(200))
+
+    # Statut
+    statut = db.Column(db.String(20), default="propose")  # propose, accepte, refuse, execute
+    date_proposition = db.Column(db.DateTime, default=datetime.utcnow)
+    date_execution = db.Column(db.DateTime)
+    prix_execution = db.Column(db.Float)  # renseigné par l'utilisateur après exécution
+
+    notes = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type_action": self.type_action,
+            "symbol": self.symbol,
+            "nom_produit": self.nom_produit,
+            "montant_suggere": self.montant_suggere,
+            "prix_cible": self.prix_cible,
+            "raison": self.raison,
+            "symbol_remplacement": self.symbol_remplacement,
+            "nom_remplacement": self.nom_remplacement,
+            "statut": self.statut,
+            "date_proposition": self.date_proposition.isoformat() if self.date_proposition else None,
+            "date_execution": self.date_execution.isoformat() if self.date_execution else None,
+            "prix_execution": self.prix_execution,
+        }
+
+
 # ─── MATIÈRES PREMIÈRES ──────────────────────────────────
 
 class CommodityPosition(db.Model):
