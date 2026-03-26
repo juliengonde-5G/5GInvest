@@ -4,7 +4,7 @@ CRUD pour chaque classe d'actifs + dashboard + AI.
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, Transaction, PortfolioSnapshot, InvestmentPath, InvestmentPosition, Arbitrage
+from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, BankTransaction, Transaction, PortfolioSnapshot, InvestmentPath, InvestmentPosition, Arbitrage
 from market_data import get_crypto_prices, get_commodity_price, get_commodity_prices
 from ai_analyzer import analyze_portfolio
 from dvf_service import geocode_address, estimate_price_m2, get_dvf_transactions, get_dvf_history_10y
@@ -809,13 +809,19 @@ def list_cash():
 @api.route("/cash", methods=["POST"])
 def create_cash():
     data = request.get_json()
+    from models import TYPES_COMPTE
+    type_info = TYPES_COMPTE.get(data.get("type_compte", "autre"), {})
     account = CashAccount(
         nom=data["nom"],
         type_compte=data.get("type_compte"),
         banque=data.get("banque"),
+        numero_compte=data.get("numero_compte"),
         solde=data.get("solde", 0),
-        taux_interet=data.get("taux_interet", 0),
-        plafond=data.get("plafond"),
+        solde_date=date.fromisoformat(data["solde_date"]) if data.get("solde_date") else date.today(),
+        taux_interet=data.get("taux_interet") or type_info.get("taux_defaut", 0),
+        plafond=data.get("plafond") or type_info.get("plafond"),
+        date_ouverture=date.fromisoformat(data["date_ouverture"]) if data.get("date_ouverture") else None,
+        est_compte_joint=data.get("est_compte_joint", False),
         notes=data.get("notes"),
     )
     db.session.add(account)
@@ -827,9 +833,13 @@ def create_cash():
 def update_cash(id):
     account = CashAccount.query.get_or_404(id)
     data = request.get_json()
-    for key in ["nom", "type_compte", "banque", "solde", "taux_interet", "plafond", "notes"]:
+    for key in ["nom", "type_compte", "banque", "numero_compte", "solde",
+                "taux_interet", "plafond", "est_compte_joint", "notes"]:
         if key in data:
             setattr(account, key, data[key])
+    for df in ["solde_date", "date_ouverture"]:
+        if df in data and data[df]:
+            setattr(account, df, date.fromisoformat(data[df]))
     db.session.commit()
     return jsonify(account.to_dict())
 
@@ -840,6 +850,134 @@ def delete_cash(id):
     db.session.delete(account)
     db.session.commit()
     return jsonify({"status": "ok"})
+
+
+# ─── TRANSACTIONS BANCAIRES ──────────────────────────────
+
+@api.route("/cash/<int:account_id>/transactions", methods=["GET"])
+def list_bank_transactions(account_id):
+    CashAccount.query.get_or_404(account_id)
+    txs = BankTransaction.query.filter_by(account_id=account_id).order_by(BankTransaction.date.desc()).limit(200).all()
+    return jsonify([t.to_dict() for t in txs])
+
+
+@api.route("/cash/<int:account_id>/transactions", methods=["POST"])
+def create_bank_transaction(account_id):
+    """Ajouter une transaction (auto-catégorisée)."""
+    CashAccount.query.get_or_404(account_id)
+    data = request.get_json()
+    from cash_engine import categorize_transaction
+    cat = categorize_transaction(data.get("libelle", ""))
+
+    tx = BankTransaction(
+        account_id=account_id,
+        date=date.fromisoformat(data["date"]) if data.get("date") else date.today(),
+        libelle=data.get("libelle"),
+        montant=data.get("montant", 0),
+        categorie=data.get("categorie") or cat["categorie"],
+        sous_categorie=data.get("sous_categorie") or cat["sous_categorie"],
+        est_recurrent=data.get("est_recurrent", False),
+        frequence=data.get("frequence"),
+        source=data.get("source", "manuel"),
+        reference=data.get("reference"),
+    )
+    db.session.add(tx)
+    db.session.commit()
+    return jsonify(tx.to_dict()), 201
+
+
+@api.route("/cash/<int:account_id>/transactions/import", methods=["POST"])
+def import_bank_transactions(account_id):
+    """Import en lot de transactions (depuis CSV ou API bancaire)."""
+    CashAccount.query.get_or_404(account_id)
+    data = request.get_json()
+    transactions = data.get("transactions", [])
+    from cash_engine import categorize_batch
+    categorize_batch(transactions)
+
+    created = 0
+    for tx_data in transactions:
+        tx = BankTransaction(
+            account_id=account_id,
+            date=date.fromisoformat(tx_data["date"]) if tx_data.get("date") else date.today(),
+            libelle=tx_data.get("libelle"),
+            montant=tx_data.get("montant", 0),
+            categorie=tx_data.get("categorie", "autre"),
+            sous_categorie=tx_data.get("sous_categorie", "autre"),
+            est_recurrent=tx_data.get("est_recurrent", False),
+            source=tx_data.get("source", "import"),
+            reference=tx_data.get("reference"),
+        )
+        db.session.add(tx)
+        created += 1
+
+    db.session.commit()
+    return jsonify({"status": "ok", "imported": created})
+
+
+# ─── ANALYSE CASH / PRÉVISIONNEL ─────────────────────────
+
+@api.route("/cash/<int:account_id>/analysis")
+def cash_analysis(account_id):
+    """Analyse complète d'un compte: récurrences, budget, prévisionnel."""
+    account = CashAccount.query.get_or_404(account_id)
+    txs = BankTransaction.query.filter_by(account_id=account_id).order_by(BankTransaction.date.desc()).all()
+    tx_dicts = [t.to_dict() for t in txs]
+
+    from cash_engine import detect_recurring, build_forecast, build_budget_summary
+
+    recurring = detect_recurring(tx_dicts)
+    budget = build_budget_summary(tx_dicts, mois=3)
+
+    # Prévisionnel 3, 6, 12 mois
+    forecast_3 = build_forecast(account.solde, recurring, horizon_mois=3)
+    forecast_6 = build_forecast(account.solde, recurring, horizon_mois=6)
+    forecast_12 = build_forecast(account.solde, recurring, horizon_mois=12)
+
+    return jsonify({
+        "account": account.to_dict(),
+        "recurring": recurring,
+        "budget": budget,
+        "forecast": {
+            "3_mois": forecast_3,
+            "6_mois": forecast_6,
+            "12_mois": forecast_12,
+        },
+    })
+
+
+@api.route("/cash/summary")
+def cash_summary():
+    """Résumé global de tous les comptes cash."""
+    accounts = CashAccount.query.all()
+    total_solde = sum(a.solde for a in accounts)
+    total_interet = sum(a.interet_annuel_estime for a in accounts)
+
+    # Propositions d'optimisation
+    propositions = []
+    for a in accounts:
+        if a.type_compte == "ccp" and a.solde > 5000:
+            propositions.append({
+                "type": "optimisation",
+                "compte": a.nom,
+                "message": f"{a.nom}: {a.solde:.0f}€ sur compte courant (0%). "
+                           f"Transférez {a.solde - 2000:.0f}€ vers un livret rémunéré.",
+            })
+        if a.plafond and a.remplissage_pct and a.remplissage_pct < 50 and a.taux_interet >= 2:
+            propositions.append({
+                "type": "remplissage",
+                "compte": a.nom,
+                "message": f"{a.nom}: rempli à {a.remplissage_pct:.0f}% seulement. "
+                           f"Espace disponible: {a.plafond - a.solde:.0f}€ à {a.taux_interet}%.",
+            })
+
+    return jsonify({
+        "nb_comptes": len(accounts),
+        "total_solde": round(total_solde, 2),
+        "total_interet_annuel": round(total_interet, 2),
+        "comptes": [a.to_dict() for a in accounts],
+        "propositions": propositions,
+    })
 
 
 # ─── TRANSACTIONS ─────────────────────────────────────────

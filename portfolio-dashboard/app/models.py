@@ -632,38 +632,109 @@ class CommodityPosition(db.Model):
 
 # ─── CASH / COMPTES BANCAIRES ────────────────────────────
 
+TYPES_COMPTE = {
+    "ccp": {"label": "Compte courant", "taux_defaut": 0, "plafond": None},
+    "livret_a": {"label": "Livret A", "taux_defaut": 2.4, "plafond": 22950},
+    "ldds": {"label": "LDDS", "taux_defaut": 2.4, "plafond": 12000},
+    "lep": {"label": "LEP", "taux_defaut": 3.5, "plafond": 10000},
+    "pel": {"label": "PEL", "taux_defaut": 2.25, "plafond": 61200},
+    "cel": {"label": "CEL", "taux_defaut": 2.0, "plafond": 15300},
+    "csl": {"label": "Compte sur livret", "taux_defaut": 0.5, "plafond": None},
+    "compte_terme": {"label": "Compte à terme", "taux_defaut": 3.0, "plafond": None},
+    "autre": {"label": "Autre", "taux_defaut": 0, "plafond": None},
+}
+
+
 class CashAccount(db.Model):
     __tablename__ = "cash_accounts"
 
     id = db.Column(db.Integer, primary_key=True)
-    nom = db.Column(db.String(200), nullable=False)  # "Livret A BoursoBank"
-    type_compte = db.Column(db.String(50))  # ccp, livret_a, ldds, lep, pel, csl, autre
+    nom = db.Column(db.String(200), nullable=False)
+    type_compte = db.Column(db.String(50))
     banque = db.Column(db.String(100))
+    numero_compte = db.Column(db.String(50))  # IBAN masqué
     solde = db.Column(db.Float, default=0)
-    taux_interet = db.Column(db.Float, default=0)  # % annuel
+    solde_date = db.Column(db.Date, default=date.today)
+    taux_interet = db.Column(db.Float, default=0)
     plafond = db.Column(db.Float)
+    date_ouverture = db.Column(db.Date)
+    est_compte_joint = db.Column(db.Boolean, default=False)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relations
+    bank_transactions = db.relationship("BankTransaction", backref="account", cascade="all,delete-orphan", lazy=True)
+
     @property
     def interet_annuel_estime(self):
         return round(self.solde * self.taux_interet / 100, 2)
+
+    @property
+    def remplissage_pct(self):
+        if self.plafond and self.plafond > 0:
+            return round(self.solde / self.plafond * 100, 1)
+        return None
 
     def to_dict(self):
         return {
             "id": self.id,
             "nom": self.nom,
             "type_compte": self.type_compte,
+            "type_label": TYPES_COMPTE.get(self.type_compte, {}).get("label", self.type_compte),
             "banque": self.banque,
             "solde": self.solde,
+            "solde_date": self.solde_date.isoformat() if self.solde_date else None,
             "taux_interet": self.taux_interet,
             "plafond": self.plafond,
+            "remplissage_pct": self.remplissage_pct,
             "interet_annuel_estime": self.interet_annuel_estime,
+            "date_ouverture": self.date_ouverture.isoformat() if self.date_ouverture else None,
+            "est_compte_joint": self.est_compte_joint,
         }
 
 
-# ─── TRANSACTIONS (historique global) ────────────────────
+class BankTransaction(db.Model):
+    """Transaction bancaire (pour analyse flux et prévisionnel)."""
+    __tablename__ = "bank_transactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("cash_accounts.id"), nullable=False)
+
+    date = db.Column(db.Date, nullable=False)
+    libelle = db.Column(db.String(500))
+    montant = db.Column(db.Float, default=0)  # positif = crédit, négatif = débit
+
+    # Catégorisation
+    categorie = db.Column(db.String(50))
+    # loyer, salaire, courses, restaurant, transport, abonnement, sante,
+    # energie, telecom, impots, epargne, loisirs, shopping, autre
+    sous_categorie = db.Column(db.String(50))
+    est_recurrent = db.Column(db.Boolean, default=False)
+    frequence = db.Column(db.String(20))  # mensuel, hebdo, trimestriel, annuel
+
+    # Source
+    source = db.Column(db.String(20), default="manuel")  # manuel, import, api_bancaire
+    reference = db.Column(db.String(100))  # ID transaction banque
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "account_id": self.account_id,
+            "date": self.date.isoformat(),
+            "libelle": self.libelle,
+            "montant": self.montant,
+            "categorie": self.categorie,
+            "sous_categorie": self.sous_categorie,
+            "est_recurrent": self.est_recurrent,
+            "frequence": self.frequence,
+            "source": self.source,
+        }
+
+
+# ─── TRANSACTIONS PATRIMOINE (historique global) ─────────
 
 class Transaction(db.Model):
     __tablename__ = "transactions"
