@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, X, Download } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, X, Download, Wifi, ExternalLink } from "lucide-react";
 
 const API = "/api";
 
@@ -176,12 +176,17 @@ export default function BankingConnect({ accounts, onSynced }) {
     );
   }
 
-  // ─── STEP: UPLOAD ──────────────────────────────────────
+  // ─── STEP: UPLOAD (CSV + Powens) ─────────────────────────
   return (
-    <div className="card p-5 space-y-4">
+    <div className="space-y-4">
+      {/* Powens auto-connect */}
+      <PowensConnect accounts={accounts} onSynced={onSynced} />
+
+      {/* CSV import */}
+      <div className="card p-5 space-y-4">
       <div className="flex items-center gap-2">
         <Upload size={16} className="text-blue-400" />
-        <h3 className="text-sm font-semibold">Importer un relevé CSV</h3>
+        <h3 className="text-sm font-semibold">Import CSV (manuel)</h3>
       </div>
 
       <p className="text-xs text-[#71717a]">
@@ -234,8 +239,119 @@ export default function BankingConnect({ accounts, onSynced }) {
         </div>
       </details>
     </div>
+    </div>
   );
 }
+
+
+// ─── POWENS AUTO-CONNECT ─────────────────────────────────
+
+function PowensConnect({ accounts, onSynced }) {
+  const [configured, setConfigured] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [powensData, setPowensData] = useState(null); // {token, webview_url}
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API}/powens/status`).then(r => r.json()).then(d => setConfigured(d.configured)).catch(() => setConfigured(false));
+  }, []);
+
+  async function startConnect() {
+    setConnecting(true);
+    try {
+      const res = await fetch(`${API}/powens/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ redirect_uri: `${window.location.origin}/powens/callback` }),
+      });
+      const data = await res.json();
+      if (data.webview_url) {
+        setPowensData(data);
+        window.open(data.webview_url, "_blank");
+      }
+    } catch (e) {}
+    setConnecting(false);
+  }
+
+  async function doSync() {
+    if (!powensData?.token) return;
+    setSyncing(true);
+    try {
+      const res = await fetch(`${API}/powens/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: powensData.token }),
+      });
+      const data = await res.json();
+      setSyncResult(data);
+      if (data.status === "ok") onSynced?.();
+    } catch (e) {}
+    setSyncing(false);
+  }
+
+  if (configured === false || configured === null) return null;
+
+  // Sync result
+  if (syncResult?.status === "ok") {
+    return (
+      <div className="card p-5 border-l-4 border-l-emerald-500">
+        <CheckCircle size={24} className="text-emerald-400 mb-2" />
+        <h3 className="font-bold mb-2">Synchronisation Powens réussie</h3>
+        {syncResult.accounts?.map((a, i) => (
+          <div key={i} className="flex justify-between text-xs py-1">
+            <span>{a.nom}</span>
+            <span className="text-emerald-400">{a.transactions_imported} transactions</span>
+          </div>
+        ))}
+        <button onClick={() => { setSyncResult(null); setPowensData(null); }}
+          className="mt-3 text-xs text-[#52525b] hover:text-white">Reconnecter</button>
+      </div>
+    );
+  }
+
+  // En attente
+  if (powensData) {
+    return (
+      <div className="card p-5 border-l-4 border-l-blue-500">
+        <div className="flex items-center gap-2 mb-2">
+          <Wifi size={16} className="text-blue-400 animate-pulse" />
+          <h3 className="text-sm font-semibold">Connexion Powens en cours</h3>
+        </div>
+        <p className="text-xs text-[#71717a] mb-3">
+          Authentifiez-vous dans l'onglet qui vient de s'ouvrir, puis revenez ici.
+        </p>
+        <button onClick={doSync} disabled={syncing}
+          className="px-4 py-2 rounded-lg bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition disabled:opacity-50">
+          {syncing ? <><Loader2 size={14} className="animate-spin inline mr-1" /> Synchronisation...</>
+            : "J'ai terminé, synchroniser"}
+        </button>
+      </div>
+    );
+  }
+
+  // Bouton de connexion
+  return (
+    <div className="card p-5 border-l-4 border-l-blue-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Wifi size={16} className="text-blue-400" />
+            <h3 className="text-sm font-semibold">Connexion automatique (Powens)</h3>
+          </div>
+          <p className="text-[10px] text-[#52525b]">
+            Synchronisez automatiquement vos comptes et transactions. 350+ banques françaises.
+          </p>
+        </div>
+        <button onClick={startConnect} disabled={connecting}
+          className="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium hover:bg-blue-500 transition disabled:opacity-50 shrink-0">
+          {connecting ? <Loader2 size={14} className="animate-spin" /> : <><ExternalLink size={14} className="inline mr-1" /> Connecter</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 
 function fmt(n) {
   if (n == null || isNaN(n)) return "—";

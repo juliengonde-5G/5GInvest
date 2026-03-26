@@ -1254,3 +1254,126 @@ def fiscal_report_pdf():
         as_attachment=True,
         download_name=f"recap_fiscal_{year or 'annuel'}.pdf",
     )
+
+
+# ─── POWENS (agrégation bancaire) ─────────────────────────
+
+@api.route("/powens/status")
+def powens_status():
+    from powens_api import is_configured
+    return jsonify({"configured": is_configured()})
+
+
+@api.route("/powens/init", methods=["POST"])
+def powens_init():
+    """Crée un utilisateur Powens et retourne l'URL de la webview."""
+    from powens_api import create_user, get_webview_url
+    data = request.get_json() or {}
+    redirect_uri = data.get("redirect_uri", "https://dashboard.5ginvest.fr/powens/callback")
+
+    user = create_user()
+    if "error" in user:
+        return jsonify(user), 500
+
+    webview = get_webview_url(user["token"], redirect_uri)
+    if "error" in webview:
+        return jsonify(webview), 500
+
+    return jsonify({
+        "user_id": user["user_id"],
+        "token": user["token"],
+        "webview_url": webview["url"],
+    })
+
+
+@api.route("/powens/accounts")
+def powens_accounts():
+    """Liste les comptes Powens."""
+    from powens_api import list_accounts
+    token = request.args.get("token") or request.headers.get("X-Powens-Token")
+    if not token:
+        return jsonify({"error": "Token Powens requis"}), 400
+    return jsonify(list_accounts(token))
+
+
+@api.route("/powens/connections")
+def powens_connections():
+    """Liste les connexions bancaires."""
+    from powens_api import list_connections
+    token = request.args.get("token") or request.headers.get("X-Powens-Token")
+    if not token:
+        return jsonify({"error": "Token requis"}), 400
+    return jsonify(list_connections(token))
+
+
+@api.route("/powens/sync", methods=["POST"])
+def powens_sync():
+    """
+    Synchronise les comptes Powens vers notre DB.
+    Crée/met à jour les CashAccount + importe les BankTransactions.
+    """
+    from powens_api import sync_all
+    from cash_engine import categorize_transaction
+    from models import TYPES_COMPTE
+
+    data = request.get_json() or {}
+    token = data.get("token") or request.headers.get("X-Powens-Token")
+    if not token:
+        return jsonify({"error": "Token requis"}), 400
+
+    synced_data = sync_all(token)
+    results = []
+
+    for acc in synced_data.get("accounts", []):
+        # Trouver ou créer le compte
+        iban_short = acc.get("iban", "")[-8:] if acc.get("iban") else acc.get("number", "")
+        existing = CashAccount.query.filter_by(numero_compte=iban_short).first() if iban_short else None
+
+        if not existing:
+            type_info = TYPES_COMPTE.get(acc.get("type", "ccp"), {})
+            existing = CashAccount(
+                nom=acc.get("name", "Compte Powens"),
+                type_compte=acc.get("type", "ccp"),
+                banque="",
+                numero_compte=iban_short,
+                solde=acc.get("balance", 0),
+                solde_date=date.today(),
+                taux_interet=type_info.get("taux_defaut", 0),
+                plafond=type_info.get("plafond"),
+            )
+            db.session.add(existing)
+            db.session.flush()
+        else:
+            existing.solde = acc.get("balance", existing.solde)
+            existing.solde_date = date.today()
+
+        # Importer les transactions
+        imported = 0
+        for tx_data in acc.get("transactions", []):
+            ref = tx_data.get("reference", "")
+            if ref and BankTransaction.query.filter_by(account_id=existing.id, reference=ref).first():
+                continue
+
+            cat = categorize_transaction(tx_data.get("libelle", ""))
+            tx = BankTransaction(
+                account_id=existing.id,
+                date=date.fromisoformat(tx_data["date"]) if tx_data.get("date") else date.today(),
+                libelle=tx_data.get("libelle", ""),
+                montant=tx_data.get("montant", 0),
+                categorie=cat["categorie"],
+                sous_categorie=cat["sous_categorie"],
+                source="powens",
+                reference=ref,
+            )
+            db.session.add(tx)
+            imported += 1
+
+        results.append({
+            "account_id": existing.id,
+            "nom": existing.nom,
+            "solde": existing.solde,
+            "transactions_imported": imported,
+        })
+
+    db.session.commit()
+    return jsonify({"status": "ok", "accounts": results})
