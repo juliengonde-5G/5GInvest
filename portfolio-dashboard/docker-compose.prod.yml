@@ -28,6 +28,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-portfolio}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portfolio}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       ALPHA_VANTAGE_KEY: ${ALPHA_VANTAGE_KEY:-}
+      GOCARDLESS_SECRET_ID: ${GOCARDLESS_SECRET_ID:-}
+      GOCARDLESS_SECRET_KEY: ${GOCARDLESS_SECRET_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       FLASK_ENV: production
     ports:

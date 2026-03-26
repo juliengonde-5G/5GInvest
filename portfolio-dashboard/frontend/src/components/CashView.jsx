@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Wallet, Landmark, PiggyBank, ArrowUpRight, Plus, AlertTriangle, Lightbulb, TrendingUp, Clock, Loader2 } from "lucide-react";
+import { Wallet, Landmark, PiggyBank, ArrowUpRight, Plus, AlertTriangle, Lightbulb, TrendingUp, Clock, Loader2, Wifi } from "lucide-react";
+import BankingConnect from "./BankingConnect";
 
 const API = "/api";
 
@@ -10,6 +11,7 @@ export default function CashView({ items, onRefresh }) {
   const [analysis, setAnalysis] = useState(null);
   const [forecastHorizon, setForecastHorizon] = useState("3_mois");
   const [showAdd, setShowAdd] = useState(false);
+  const [showBanking, setShowBanking] = useState(false);
 
   useEffect(() => { loadSummary(); }, [items]);
 
@@ -53,10 +55,16 @@ export default function CashView({ items, onRefresh }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">Cash & Épargne</h2>
-        <button onClick={() => setShowAdd(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition">
-          <Plus size={16} /> Ajouter un compte
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowBanking(!showBanking)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-sm font-medium hover:bg-blue-500 transition">
+            <Wifi size={16} /> Connecter une banque
+          </button>
+          <button onClick={() => setShowAdd(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition">
+            <Plus size={16} /> Manuel
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -74,6 +82,11 @@ export default function CashView({ items, onRefresh }) {
           <div className="text-xl font-bold">{comptes.length}</div>
         </div>
       </div>
+
+      {/* Connexion bancaire */}
+      {showBanking && (
+        <BankingConnect onSynced={() => { setShowBanking(false); onRefresh(); loadSummary(); }} />
+      )}
 
       {/* Propositions d'optimisation */}
       {propositions.length > 0 && (
