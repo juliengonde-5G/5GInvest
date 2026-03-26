@@ -58,7 +58,7 @@ export default function CashView({ items, onRefresh }) {
         <div className="flex gap-2">
           <button onClick={() => setShowBanking(!showBanking)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-sm font-medium hover:bg-blue-500 transition">
-            <Wifi size={16} /> Connecter une banque
+            <Wifi size={16} /> Importer CSV
           </button>
           <button onClick={() => setShowAdd(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition">
@@ -85,7 +85,7 @@ export default function CashView({ items, onRefresh }) {
 
       {/* Connexion bancaire */}
       {showBanking && (
-        <BankingConnect onSynced={() => { setShowBanking(false); onRefresh(); loadSummary(); }} />
+        <BankingConnect accounts={comptes} onSynced={() => { setShowBanking(false); onRefresh(); loadSummary(); }} />
       )}
 
       {/* Propositions d'optimisation */}

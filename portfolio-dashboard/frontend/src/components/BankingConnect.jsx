@@ -1,218 +1,243 @@
-import { useState, useEffect } from "react";
-import { Building, Link, CheckCircle, XCircle, RefreshCw, ExternalLink, Loader2, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { useState, useRef } from "react";
+import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, X, Download } from "lucide-react";
 
 const API = "/api";
 
-export default function BankingConnect({ onSynced }) {
-  const [configured, setConfigured] = useState(null);
-  const [institutions, setInstitutions] = useState([]);
-  const [search, setSearch] = useState("");
-  const [connecting, setConnecting] = useState(null);  // institution_id en cours
-  const [requisition, setRequisition] = useState(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
-  const [loading, setLoading] = useState(true);
+const BANKS_LIST = [
+  { id: "boursorama", label: "Boursorama / BoursoBank" },
+  { id: "societe_generale", label: "Société Générale" },
+  { id: "credit_agricole", label: "Crédit Agricole" },
+  { id: "bnp", label: "BNP Paribas" },
+  { id: "fortuneo", label: "Fortuneo" },
+  { id: "revolut", label: "Revolut" },
+  { id: "lcl", label: "LCL" },
+  { id: "la_banque_postale", label: "La Banque Postale" },
+  { id: "n26", label: "N26" },
+  { id: "trade_republic", label: "Trade Republic" },
+  { id: "generic", label: "Autre banque (auto-détection)" },
+];
 
-  useEffect(() => { checkStatus(); }, []);
+export default function BankingConnect({ accounts, onSynced }) {
+  const [step, setStep] = useState("upload"); // upload, preview, importing, done
+  const [bank, setBank] = useState("generic");
+  const [targetAccount, setTargetAccount] = useState(null);
+  const [parsed, setParsed] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const fileRef = useRef();
 
-  async function checkStatus() {
-    setLoading(true);
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setParsed(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
     try {
-      const res = await fetch(`${API}/banking/status`);
-      const data = await res.json();
-      setConfigured(data.configured);
-      if (data.configured) loadInstitutions();
-    } catch (e) {}
-    setLoading(false);
-  }
-
-  async function loadInstitutions() {
-    try {
-      const res = await fetch(`${API}/banking/institutions?country=FR`);
-      setInstitutions(await res.json());
-    } catch (e) {}
-  }
-
-  async function connectBank(institutionId) {
-    setConnecting(institutionId);
-    try {
-      const res = await fetch(`${API}/banking/connect`, {
+      const res = await fetch(`${API}/banking/csv/parse?bank=${bank}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          institution_id: institutionId,
-          redirect_url: `${window.location.origin}/banking/callback`,
-        }),
+        body: formData,
       });
       const data = await res.json();
-      if (data.link) {
-        setRequisition(data);
-        // Ouvrir le lien dans un nouvel onglet
-        window.open(data.link, "_blank");
-      } else {
-        setRequisition({ error: data.error || "Erreur de connexion" });
+
+      if (data.error) {
+        setError(data.error);
+        return;
       }
+
+      setParsed(data);
+      setStep("preview");
     } catch (e) {
-      setRequisition({ error: "Erreur réseau" });
+      setError("Erreur de lecture du fichier");
     }
-    setConnecting(null);
   }
 
-  async function checkAndSync() {
-    if (!requisition?.requisition_id) return;
-    setSyncing(true);
-    setSyncResult(null);
+  async function doImport() {
+    if (!targetAccount || !parsed?.transactions) return;
+    setImporting(true);
+    setError(null);
+
     try {
-      // Vérifier le statut
-      const statusRes = await fetch(`${API}/banking/requisition/${requisition.requisition_id}/status`);
-      const status = await statusRes.json();
-
-      if (status.status === "LN") {
-        // Lié ! Synchroniser
-        const syncRes = await fetch(`${API}/banking/requisition/${requisition.requisition_id}/sync`, { method: "POST" });
-        const result = await syncRes.json();
-        setSyncResult(result);
-        if (result.status === "ok") {
-          onSynced?.();
-        }
-      } else {
-        setSyncResult({ error: `Connexion pas encore active. Statut: ${status.status}. Authentifiez-vous sur le site de votre banque.` });
-      }
+      const res = await fetch(`${API}/banking/csv/import/${targetAccount}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transactions: parsed.transactions }),
+      });
+      const data = await res.json();
+      setResult(data);
+      setStep("done");
+      onSynced?.();
     } catch (e) {
-      setSyncResult({ error: "Erreur de synchronisation" });
+      setError("Erreur d'import");
     }
-    setSyncing(false);
+    setImporting(false);
   }
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-[#52525b]" /></div>;
-
-  // API non configurée
-  if (configured === false) {
+  // ─── STEP: DONE ────────────────────────────────────────
+  if (step === "done" && result) {
     return (
       <div className="card p-6 text-center">
-        <WifiOff size={32} className="mx-auto text-[#52525b] mb-3" />
-        <h3 className="font-bold mb-2">Connexion bancaire non configurée</h3>
-        <p className="text-xs text-[#71717a] mb-4 max-w-md mx-auto">
-          Pour synchroniser automatiquement vos comptes, créez un compte gratuit sur
-          GoCardless Bank Account Data et ajoutez vos clés API dans le fichier .env
-        </p>
-        <div className="bg-[#18181b] rounded-lg p-3 text-[10px] text-left text-[#52525b] max-w-sm mx-auto font-mono">
-          GOCARDLESS_SECRET_ID=votre_id<br />
-          GOCARDLESS_SECRET_KEY=votre_key
+        <CheckCircle size={40} className="mx-auto text-emerald-400 mb-3" />
+        <h3 className="font-bold text-lg mb-2">Import terminé !</h3>
+        <div className="text-sm text-[#a1a1aa] space-y-1">
+          <div>{result.imported} transactions importées</div>
+          {result.skipped > 0 && <div className="text-[#52525b]">{result.skipped} doublons ignorés</div>}
         </div>
-        <p className="text-[10px] text-[#3f3f46] mt-3">
-          En attendant, vous pouvez ajouter vos comptes manuellement dans l'onglet Cash.
-        </p>
+        <button onClick={() => { setStep("upload"); setParsed(null); setResult(null); }}
+          className="mt-4 px-4 py-2 rounded-lg bg-[#18181b] text-sm text-[#a1a1aa] hover:text-white transition">
+          Importer un autre fichier
+        </button>
       </div>
     );
   }
 
-  // Résultat de synchronisation
-  if (syncResult?.status === "ok") {
+  // ─── STEP: PREVIEW ─────────────────────────────────────
+  if (step === "preview" && parsed) {
     return (
-      <div className="card p-6">
-        <div className="text-center mb-4">
-          <CheckCircle size={40} className="mx-auto text-emerald-400 mb-2" />
-          <h3 className="font-bold text-lg">Synchronisation réussie !</h3>
+      <div className="card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">Aperçu de l'import</h3>
+          <button onClick={() => { setStep("upload"); setParsed(null); }} className="text-[#52525b] hover:text-white">
+            <X size={16} />
+          </button>
         </div>
-        <div className="space-y-2">
-          {syncResult.accounts?.map((acc, i) => (
-            <div key={i} className="flex justify-between items-center bg-[#18181b] rounded-lg p-3">
-              <div>
-                <div className="text-sm font-medium">{acc.nom}</div>
-                <div className="text-[10px] text-[#52525b]">{acc.transactions_imported} transactions importées</div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-[#18181b] rounded-lg p-3 text-center">
+            <div className="text-[10px] text-[#52525b]">Transactions</div>
+            <div className="text-lg font-bold">{parsed.nb_parsed}</div>
+          </div>
+          <div className="bg-[#18181b] rounded-lg p-3 text-center">
+            <div className="text-[10px] text-[#52525b]">Banque détectée</div>
+            <div className="text-sm font-medium">{BANKS_LIST.find(b => b.id === parsed.bank_detected)?.label || parsed.bank_detected}</div>
+          </div>
+          <div className="bg-[#18181b] rounded-lg p-3 text-center">
+            <div className="text-[10px] text-[#52525b]">Erreurs</div>
+            <div className={`text-lg font-bold ${parsed.errors?.length ? "text-amber-400" : "text-emerald-400"}`}>
+              {parsed.errors?.length || 0}
+            </div>
+          </div>
+        </div>
+
+        {/* Erreurs */}
+        {parsed.errors?.length > 0 && (
+          <div className="text-xs text-amber-400 bg-amber-500/10 rounded-lg p-2 space-y-0.5">
+            {parsed.errors.slice(0, 5).map((e, i) => <div key={i}>{e}</div>)}
+          </div>
+        )}
+
+        {/* Aperçu des transactions */}
+        <div className="max-h-[200px] overflow-y-auto">
+          <div className="text-[10px] text-[#52525b] uppercase tracking-wide mb-1">Aperçu (10 premières)</div>
+          {parsed.transactions.slice(0, 10).map((tx, i) => (
+            <div key={i} className="flex justify-between py-1.5 border-b border-[#1c1c22] last:border-0 text-xs">
+              <div className="flex gap-3">
+                <span className="text-[#52525b] w-20">{tx.date}</span>
+                <span className="truncate max-w-[200px]">{tx.libelle}</span>
               </div>
-              <div className="text-sm font-bold">{fmt(acc.solde)}</div>
+              <span className={`font-medium ${tx.montant >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {tx.montant >= 0 ? "+" : ""}{tx.montant.toFixed(2)} €
+              </span>
             </div>
           ))}
         </div>
-        <button onClick={() => { setSyncResult(null); setRequisition(null); }}
-          className="w-full mt-4 py-2 rounded-lg bg-[#18181b] text-sm text-[#a1a1aa] hover:text-white transition">
-          Connecter une autre banque
-        </button>
-      </div>
-    );
-  }
 
-  // En attente de connexion
-  if (requisition && !requisition.error) {
-    return (
-      <div className="card p-6 text-center">
-        <Wifi size={32} className="mx-auto text-blue-400 mb-3 animate-pulse" />
-        <h3 className="font-bold mb-2">En attente d'authentification</h3>
-        <p className="text-xs text-[#71717a] mb-4">
-          Authentifiez-vous sur le site de votre banque dans l'onglet qui vient de s'ouvrir.
-          Revenez ici ensuite.
-        </p>
-        <button onClick={checkAndSync} disabled={syncing}
-          className="px-6 py-2.5 rounded-xl bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition disabled:opacity-50">
-          {syncing ? <><Loader2 size={14} className="animate-spin inline mr-2" /> Synchronisation...</> : <><RefreshCw size={14} className="inline mr-2" /> J'ai terminé, synchroniser</>}
-        </button>
-        {syncResult?.error && (
-          <div className="mt-3 text-xs text-amber-400 bg-amber-500/10 rounded-lg p-2">
-            <AlertTriangle size={12} className="inline mr-1" /> {syncResult.error}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Sélection de banque
-  const filtered = institutions.filter(i =>
-    (i.name || "").toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <div className="space-y-4">
-      <div className="card p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Wifi size={16} className="text-emerald-400" />
-          <h3 className="text-sm font-semibold">Connecter une banque</h3>
+        {/* Sélection du compte cible */}
+        <div>
+          <label className="text-[11px] text-[#71717a] font-medium mb-2 block">Importer dans quel compte ?</label>
+          {accounts?.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              {accounts.map(a => (
+                <button key={a.id} onClick={() => setTargetAccount(a.id)}
+                  className={`p-2.5 rounded-lg border text-left text-xs transition
+                    ${targetAccount === a.id ? "border-emerald-500 bg-emerald-500/10 text-white" : "border-[#1c1c22] text-[#a1a1aa]"}`}>
+                  <div className="font-medium">{a.nom}</div>
+                  <div className="text-[10px] text-[#52525b]">{a.banque} · {fmt(a.solde)}</div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-[#52525b]">Créez d'abord un compte dans l'onglet Cash.</div>
+          )}
         </div>
-        <p className="text-xs text-[#71717a] mb-3">
-          Sélectionnez votre banque pour synchroniser automatiquement vos comptes et transactions (90 jours).
-        </p>
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Rechercher une banque..."
-          className="w-full px-3 py-2 bg-[#18181b] border border-[#27272a] rounded-lg text-sm text-white placeholder-[#3f3f46] focus:border-emerald-500 focus:outline-none mb-3"
-        />
 
-        <div className="grid grid-cols-2 gap-2 max-h-[400px] overflow-y-auto">
-          {filtered.slice(0, 30).map(inst => (
-            <button
-              key={inst.id}
-              onClick={() => connectBank(inst.id)}
-              disabled={connecting === inst.id}
-              className="flex items-center gap-2 p-3 rounded-xl border border-[#1c1c22] text-left text-xs hover:border-emerald-500 hover:bg-emerald-500/5 transition disabled:opacity-50"
-            >
-              <Building size={16} className="text-[#52525b] shrink-0" />
-              <div className="min-w-0">
-                <div className="font-medium text-white truncate">{inst.name}</div>
-                {inst.bic && <div className="text-[10px] text-[#3f3f46]">{inst.bic}</div>}
-              </div>
-              {connecting === inst.id && <Loader2 size={12} className="animate-spin ml-auto" />}
+        {error && <div className="text-xs text-red-400">{error}</div>}
+
+        <button onClick={doImport} disabled={!targetAccount || importing}
+          className="w-full py-2.5 rounded-xl bg-emerald-600 text-sm font-medium hover:bg-emerald-500 transition disabled:opacity-30">
+          {importing ? <><Loader2 size={14} className="animate-spin inline mr-2" /> Import en cours...</> :
+            `Importer ${parsed.nb_parsed} transactions`}
+        </button>
+      </div>
+    );
+  }
+
+  // ─── STEP: UPLOAD ──────────────────────────────────────
+  return (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Upload size={16} className="text-blue-400" />
+        <h3 className="text-sm font-semibold">Importer un relevé CSV</h3>
+      </div>
+
+      <p className="text-xs text-[#71717a]">
+        Exportez votre relevé depuis votre espace bancaire en ligne (format CSV),
+        puis importez-le ici. Le format est détecté automatiquement.
+      </p>
+
+      {/* Sélection banque */}
+      <div>
+        <label className="text-[11px] text-[#71717a] font-medium mb-2 block">Votre banque (aide à la détection)</label>
+        <div className="flex flex-wrap gap-1.5">
+          {BANKS_LIST.map(b => (
+            <button key={b.id} onClick={() => setBank(b.id)}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] border transition
+                ${bank === b.id ? "border-blue-500 bg-blue-500/10 text-white" : "border-[#1c1c22] text-[#52525b] hover:text-white"}`}>
+              {b.label}
             </button>
           ))}
         </div>
-
-        {requisition?.error && (
-          <div className="mt-3 text-xs text-red-400 bg-red-500/10 rounded-lg p-2">
-            <XCircle size={12} className="inline mr-1" /> {requisition.error}
-          </div>
-        )}
       </div>
 
-      <div className="text-[9px] text-[#3f3f46] text-center px-4">
-        Connexion sécurisée via GoCardless (certifié PSD2). Vos identifiants bancaires ne sont jamais stockés sur notre serveur.
+      {/* Zone d'upload */}
+      <div
+        onClick={() => fileRef.current?.click()}
+        className="border-2 border-dashed border-[#27272a] rounded-xl p-8 text-center cursor-pointer hover:border-blue-500 transition"
+      >
+        <FileText size={32} className="mx-auto text-[#52525b] mb-2" />
+        <div className="text-sm text-[#a1a1aa]">Cliquez pour sélectionner un fichier CSV</div>
+        <div className="text-[10px] text-[#3f3f46] mt-1">ou glissez-déposez ici</div>
+        <input ref={fileRef} type="file" accept=".csv,.CSV,.ofx,.OFX,.txt,.TXT" onChange={handleFile} className="hidden" />
       </div>
+
+      {error && (
+        <div className="text-xs text-red-400 bg-red-500/10 rounded-lg p-2">
+          <AlertTriangle size={12} className="inline mr-1" /> {error}
+        </div>
+      )}
+
+      {/* Guide export par banque */}
+      <details className="text-[10px] text-[#3f3f46]">
+        <summary className="cursor-pointer hover:text-[#71717a]">Comment exporter depuis ma banque ?</summary>
+        <div className="mt-2 space-y-1 pl-3">
+          <div><b>Boursorama:</b> Comptes → Historique → Exporter (CSV)</div>
+          <div><b>SG:</b> Mes comptes → Opérations → Télécharger (CSV)</div>
+          <div><b>CA:</b> Comptes → Relevé → Export tableur</div>
+          <div><b>BNP:</b> Mes comptes → Opérations → Exporter</div>
+          <div><b>Revolut:</b> Dashboard → Statements → Excel/CSV</div>
+          <div><b>N26:</b> Mon compte → Télécharger relevé → CSV</div>
+          <div><b>Fortuneo:</b> Historique → Exporter en CSV</div>
+        </div>
+      </details>
     </div>
   );
 }
 
 function fmt(n) {
   if (n == null || isNaN(n)) return "—";
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 }

@@ -920,111 +920,91 @@ def delete_cash(id):
     return jsonify({"status": "ok"})
 
 
-# ─── CONNEXION BANCAIRE API ───────────────────────────────
+# ─── IMPORT CSV BANCAIRE ──────────────────────────────────
 
-@api.route("/banking/status")
-def banking_status():
-    """Vérifie si l'API bancaire est configurée."""
-    from banking_api import is_configured
-    return jsonify({"configured": is_configured()})
+@api.route("/banking/csv/parse", methods=["POST"])
+def csv_parse():
+    """
+    Parse un CSV bancaire uploadé. Auto-détecte le format.
+    Retourne les transactions parsées + banque détectée.
+    """
+    from csv_import import parse_csv
 
+    if "file" in request.files:
+        file = request.files["file"]
+        content = file.read()
+    elif request.is_json:
+        import base64
+        content = base64.b64decode(request.json.get("content", ""))
+    else:
+        return jsonify({"error": "Fichier CSV requis (multipart ou base64)"}), 400
 
-@api.route("/banking/institutions")
-def banking_institutions():
-    """Liste les banques disponibles pour connexion."""
-    from banking_api import list_institutions
-    country = request.args.get("country", "FR")
-    return jsonify(list_institutions(country))
-
-
-@api.route("/banking/connect", methods=["POST"])
-def banking_connect():
-    """Crée un lien de connexion vers une banque."""
-    from banking_api import create_bank_link
-    data = request.get_json()
-    institution_id = data.get("institution_id")
-    redirect_url = data.get("redirect_url", "https://dashboard.5ginvest.fr/banking/callback")
-    if not institution_id:
-        return jsonify({"error": "institution_id requis"}), 400
-    result = create_bank_link(institution_id, redirect_url)
+    bank_hint = request.args.get("bank") or (request.json or {}).get("bank")
+    result = parse_csv(content, bank_hint)
     return jsonify(result)
 
 
-@api.route("/banking/requisition/<requisition_id>/status")
-def banking_requisition_status(requisition_id):
-    """Vérifie le statut d'une connexion."""
-    from banking_api import get_requisition_status
-    return jsonify(get_requisition_status(requisition_id))
-
-
-@api.route("/banking/requisition/<requisition_id>/sync", methods=["POST"])
-def banking_sync(requisition_id):
+@api.route("/banking/csv/import/<int:account_id>", methods=["POST"])
+def csv_import_to_account(account_id):
     """
-    Synchronise les comptes et transactions d'une connexion.
-    Crée/met à jour les CashAccount et importe les BankTransactions.
+    Importe les transactions parsées dans un compte existant.
+    Body: {transactions: [{date, libelle, montant}]}
     """
-    from banking_api import sync_all_accounts
+    account = CashAccount.query.get_or_404(account_id)
+    data = request.get_json()
+    transactions = data.get("transactions", [])
+
     from cash_engine import categorize_transaction
 
-    accounts = sync_all_accounts(requisition_id)
-    synced = []
-
-    for acc in accounts:
-        if "error" in acc:
-            synced.append(acc)
+    imported = 0
+    skipped = 0
+    for tx_data in transactions:
+        # Éviter les doublons (même date + même montant + même libellé)
+        existing = BankTransaction.query.filter_by(
+            account_id=account_id,
+            date=date.fromisoformat(tx_data["date"]) if tx_data.get("date") else date.today(),
+            montant=tx_data.get("montant", 0),
+            libelle=tx_data.get("libelle", "")[:100],
+        ).first()
+        if existing:
+            skipped += 1
             continue
 
-        # Trouver ou créer le compte
-        from models import TYPES_COMPTE
-        existing = CashAccount.query.filter_by(numero_compte=acc.get("iban")).first()
-        if not existing:
-            type_info = TYPES_COMPTE.get(acc.get("type", "ccp"), {})
-            existing = CashAccount(
-                nom=acc.get("name", "Compte"),
-                type_compte=acc.get("type", "ccp"),
-                banque=acc.get("owner_name", ""),
-                numero_compte=acc.get("iban", "")[-8:] if acc.get("iban") else "",
-                solde=acc.get("solde", 0),
-                solde_date=date.today(),
-                taux_interet=type_info.get("taux_defaut", 0),
-                plafond=type_info.get("plafond"),
-            )
-            db.session.add(existing)
-            db.session.flush()
-        else:
-            existing.solde = acc.get("solde", existing.solde)
-            existing.solde_date = date.today()
+        cat = categorize_transaction(tx_data.get("libelle", ""))
+        tx = BankTransaction(
+            account_id=account_id,
+            date=date.fromisoformat(tx_data["date"]) if tx_data.get("date") else date.today(),
+            libelle=tx_data.get("libelle", ""),
+            montant=tx_data.get("montant", 0),
+            categorie=tx_data.get("categorie") or cat["categorie"],
+            sous_categorie=tx_data.get("sous_categorie") or cat["sous_categorie"],
+            source="import_csv",
+        )
+        db.session.add(tx)
+        imported += 1
 
-        # Importer les transactions (éviter les doublons via reference)
-        imported = 0
-        for tx_data in acc.get("transactions", []):
-            ref = tx_data.get("reference", "")
-            if ref and BankTransaction.query.filter_by(account_id=existing.id, reference=ref).first():
-                continue
-
-            cat = categorize_transaction(tx_data.get("libelle", ""))
-            tx = BankTransaction(
-                account_id=existing.id,
-                date=date.fromisoformat(tx_data["date"]) if tx_data.get("date") else date.today(),
-                libelle=tx_data.get("libelle", ""),
-                montant=tx_data.get("montant", 0),
-                categorie=cat["categorie"],
-                sous_categorie=cat["sous_categorie"],
-                source="api_bancaire",
-                reference=ref,
-            )
-            db.session.add(tx)
-            imported += 1
-
-        synced.append({
-            "account_id": existing.id,
-            "nom": existing.nom,
-            "solde": existing.solde,
-            "transactions_imported": imported,
-        })
+    # Mettre à jour le solde du compte avec la dernière transaction
+    if transactions:
+        last_tx = sorted(transactions, key=lambda t: t.get("date", ""))[-1]
+        account.solde_date = date.fromisoformat(last_tx["date"]) if last_tx.get("date") else date.today()
 
     db.session.commit()
-    return jsonify({"status": "ok", "accounts": synced})
+    return jsonify({
+        "status": "ok",
+        "imported": imported,
+        "skipped": skipped,
+        "account": account.to_dict(),
+    })
+
+
+@api.route("/banking/csv/formats")
+def csv_formats():
+    """Liste les formats CSV supportés par banque."""
+    from csv_import import BANK_FORMATS
+    return jsonify({
+        bank: {"separator": fmt.get("separator"), "encoding": fmt.get("encoding"), "date_format": fmt.get("date_format")}
+        for bank, fmt in BANK_FORMATS.items()
+    })
 
 
 # ─── TRANSACTIONS BANCAIRES ──────────────────────────────
