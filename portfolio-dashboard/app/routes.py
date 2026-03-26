@@ -1180,3 +1180,97 @@ def create_transaction():
     db.session.add(tx)
     db.session.commit()
     return jsonify(tx.to_dict()), 201
+
+
+
+# ─── PUSH NOTIFICATIONS ──────────────────────────────────
+
+@api.route("/push/vapid-key")
+def push_vapid_key():
+    from push_notifications import get_public_key
+    return jsonify({"publicKey": get_public_key()})
+
+
+@api.route("/push/subscribe", methods=["POST"])
+def push_subscribe():
+    from push_notifications import subscribe
+    subscribe(request.get_json())
+    return jsonify({"status": "ok"})
+
+
+@api.route("/push/test", methods=["POST"])
+def push_test():
+    from push_notifications import send_push
+    sent = send_push("Portfolio Dashboard", "Notifications actives !", url="/")
+    return jsonify({"status": "ok", "sent": sent})
+
+
+# ─── IA SPÉCIALISÉE ──────────────────────────────────────
+
+@api.route("/ai/immo/<int:property_id>")
+def ai_analyze_property(property_id):
+    from ai_specialized import analyze_property
+    prop = RealEstate.query.get_or_404(property_id)
+    return jsonify(analyze_property(prop.to_dict()))
+
+
+@api.route("/ai/invest/<int:path_id>")
+def ai_analyze_path(path_id):
+    from ai_specialized import analyze_investment_path
+    path = InvestmentPath.query.get_or_404(path_id)
+    return jsonify(analyze_investment_path(path.to_dict()))
+
+
+@api.route("/ai/cash")
+def ai_analyze_cash():
+    from ai_specialized import analyze_cash_situation
+    from cash_engine import build_budget_summary
+    accounts = CashAccount.query.all()
+    txs = []
+    for a in accounts:
+        txs.extend([t.to_dict() for t in BankTransaction.query.filter_by(account_id=a.id).all()])
+    budget = build_budget_summary(txs, mois=3)
+    data = {
+        "comptes": [a.to_dict() for a in accounts],
+        "total_solde": sum(a.solde for a in accounts),
+        "total_interet_annuel": sum(a.interet_annuel_estime for a in accounts),
+        "budget": budget,
+    }
+    return jsonify(analyze_cash_situation(data))
+
+
+@api.route("/ai/digest")
+def ai_weekly_digest():
+    from ai_specialized import weekly_patrimoine_digest
+    from models import UserProfile
+    profile = UserProfile.query.first()
+    if not profile:
+        return jsonify({"error": "Profil requis"})
+    dashboard = get_dashboard().get_json()
+    return jsonify(weekly_patrimoine_digest(dashboard, profile.to_dict()))
+
+
+# ─── RAPPORT FISCAL PDF ──────────────────────────────────
+
+@api.route("/fiscal/report")
+def fiscal_report_pdf():
+    """Génère et télécharge le récap fiscal PDF."""
+    from flask import send_file
+    from fiscal_report import generate_fiscal_report
+    from models import UserProfile
+    import io
+
+    profile = UserProfile.query.first()
+    if not profile:
+        return jsonify({"error": "Profil requis"}), 400
+
+    dashboard = get_dashboard().get_json()
+    year = request.args.get("year", type=int)
+    pdf_bytes = generate_fiscal_report(profile.to_dict(), dashboard, year)
+
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"recap_fiscal_{year or 'annuel'}.pdf",
+    )

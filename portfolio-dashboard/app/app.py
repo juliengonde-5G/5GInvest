@@ -19,13 +19,21 @@ def create_app():
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
 
     # Extensions
     from models import db
     db.init_app(app)
     Migrate(app, db)
 
-    CORS(app, origins=["https://dashboard.5ginvest.fr", "http://localhost:3000", "http://localhost:5051"])
+    CORS(app, origins=["https://dashboard.5ginvest.fr", "http://localhost:3000", "http://localhost:5051"],
+         supports_credentials=True)
+
+    # OAuth
+    from auth import auth_bp, init_oauth
+    init_oauth(app)
+    app.register_blueprint(auth_bp)
 
     # Routes
     from routes import api
