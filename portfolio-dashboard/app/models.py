@@ -9,6 +9,128 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 
+# ─── PROFIL UTILISATEUR (PATRIMOINE) ─────────────────────
+
+class UserProfile(db.Model):
+    """Profil patrimonial de l'utilisateur - base du conseil."""
+    __tablename__ = "user_profiles"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Identité
+    prenom = db.Column(db.String(100))
+    nom = db.Column(db.String(100))
+    email = db.Column(db.String(200), unique=True)
+    date_naissance = db.Column(db.Date)
+    age = db.Column(db.Integer)
+
+    # Situation
+    situation_familiale = db.Column(db.String(30))  # celibataire, marie, pacse, divorce, veuf
+    nb_enfants = db.Column(db.Integer, default=0)
+    nb_parts_fiscales = db.Column(db.Float, default=1.0)
+    regime_matrimonial = db.Column(db.String(50))  # communaute, separation, universel
+
+    # Revenus
+    revenu_net_annuel = db.Column(db.Float, default=0)
+    revenu_foncier_annuel = db.Column(db.Float, default=0)
+    autres_revenus_annuel = db.Column(db.Float, default=0)
+    charges_fixes_mensuelles = db.Column(db.Float, default=0)
+
+    # Fiscal
+    tmi = db.Column(db.Float, default=0.30)
+    option_fiscale = db.Column(db.String(10), default="pfu")  # pfu, bareme
+
+    # Objectifs patrimoniaux
+    objectif_principal = db.Column(db.String(50))
+    # constitution, retraite, revenus_complementaires, transmission, liberte_financiere, projet
+    objectif_description = db.Column(db.Text)
+    age_objectif = db.Column(db.Integer)  # âge cible (ex: retraite à 60 ans)
+    montant_objectif = db.Column(db.Float)  # montant cible (ex: 500k€)
+
+    # Profil risque global
+    profil_risque = db.Column(db.String(20), default="equilibre")
+    experience_investissement = db.Column(db.String(20), default="debutant")
+    horizon_global = db.Column(db.String(20), default="moyen")  # court, moyen, long
+
+    # Épargne
+    capacite_epargne_mensuelle = db.Column(db.Float, default=0)
+    epargne_precaution_mois = db.Column(db.Integer, default=3)  # objectif mois de réserve
+
+    # Banques
+    banques = db.Column(db.Text)  # JSON array: ["Revolut", "Boursorama"]
+
+    # Enveloppes
+    has_pea = db.Column(db.Boolean, default=False)
+    pea_date_ouverture = db.Column(db.Date)
+    has_assurance_vie = db.Column(db.Boolean, default=False)
+    av_date_ouverture = db.Column(db.Date)
+    has_per = db.Column(db.Boolean, default=False)
+    has_cto = db.Column(db.Boolean, default=True)
+
+    # RGPD
+    rgpd_consent = db.Column(db.Boolean, default=False)
+    rgpd_consent_date = db.Column(db.DateTime)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def annees_avant_objectif(self):
+        if self.age_objectif and self.age:
+            return max(0, self.age_objectif - self.age)
+        return None
+
+    @property
+    def revenu_total_annuel(self):
+        return (self.revenu_net_annuel or 0) + (self.revenu_foncier_annuel or 0) + (self.autres_revenus_annuel or 0)
+
+    @property
+    def taux_effort_pct(self):
+        """Ratio charges/revenus mensuels."""
+        revenu_mensuel = self.revenu_total_annuel / 12
+        if revenu_mensuel > 0:
+            return round(self.charges_fixes_mensuelles / revenu_mensuel * 100, 1)
+        return 0
+
+    def get_banques_list(self):
+        import json
+        try:
+            return json.loads(self.banques) if self.banques else []
+        except Exception:
+            return []
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "prenom": self.prenom,
+            "email": self.email,
+            "age": self.age,
+            "situation_familiale": self.situation_familiale,
+            "nb_enfants": self.nb_enfants,
+            "nb_parts_fiscales": self.nb_parts_fiscales,
+            "revenu_net_annuel": self.revenu_net_annuel,
+            "charges_fixes_mensuelles": self.charges_fixes_mensuelles,
+            "capacite_epargne_mensuelle": self.capacite_epargne_mensuelle,
+            "taux_effort_pct": self.taux_effort_pct,
+            "tmi": self.tmi,
+            "option_fiscale": self.option_fiscale,
+            "objectif_principal": self.objectif_principal,
+            "objectif_description": self.objectif_description,
+            "age_objectif": self.age_objectif,
+            "montant_objectif": self.montant_objectif,
+            "annees_avant_objectif": self.annees_avant_objectif,
+            "profil_risque": self.profil_risque,
+            "experience_investissement": self.experience_investissement,
+            "horizon_global": self.horizon_global,
+            "banques": self.get_banques_list(),
+            "has_pea": self.has_pea,
+            "pea_date_ouverture": self.pea_date_ouverture.isoformat() if self.pea_date_ouverture else None,
+            "has_assurance_vie": self.has_assurance_vie,
+            "av_date_ouverture": self.av_date_ouverture.isoformat() if self.av_date_ouverture else None,
+            "has_per": self.has_per,
+        }
+
+
 # ─── IMMOBILIER ───────────────────────────────────────────
 
 class RealEstate(db.Model):

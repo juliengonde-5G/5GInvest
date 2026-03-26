@@ -6,8 +6,9 @@ import CryptoView from "./components/CryptoView";
 import CommoditiesView from "./components/CommoditiesView";
 import CashView from "./components/CashView";
 import InvestmentView from "./components/InvestmentView";
+import ProfileView from "./components/ProfileView";
 import {
-  LayoutDashboard, Home, Bitcoin, Gem, Wallet, Brain, RefreshCw, TrendingUp,
+  LayoutDashboard, Home, Bitcoin, Gem, Wallet, Brain, RefreshCw, TrendingUp, User,
   ChevronLeft, ChevronRight, Bell, Settings, LogOut, Search, Menu, X,
 } from "lucide-react";
 
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { id: "invest", label: "Investir", icon: TrendingUp },
   { id: "cash", label: "Cash", icon: Wallet },
   { id: "ai", label: "IA Insights", icon: Brain },
+  { id: "profile", label: "Profil", icon: User },
 ];
 
 export default function App() {
@@ -157,6 +159,7 @@ export default function App() {
                 {activeTab === "invest" && <InvestmentView onRefresh={loadDashboard} />}
                 {activeTab === "cash" && <CashView items={data.cash} onRefresh={loadDashboard} />}
                 {activeTab === "ai" && <AIInsights data={aiData} onRefresh={loadAI} />}
+                {activeTab === "profile" && <ProfileView />}
               </>
             ) : (
               <div className="text-center py-32 text-muted">

@@ -4,10 +4,11 @@ CRUD pour chaque classe d'actifs + dashboard + AI.
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, BankTransaction, Transaction, PortfolioSnapshot, InvestmentPath, InvestmentPosition, Arbitrage
+from models import db, UserProfile, RealEstate, RealEstateLoan, RealEstateWork, CryptoPosition, CommodityPosition, CashAccount, BankTransaction, Transaction, PortfolioSnapshot, InvestmentPath, InvestmentPosition, Arbitrage
 from market_data import get_crypto_prices, get_commodity_price, get_commodity_prices
 from ai_analyzer import analyze_portfolio
 from dvf_service import geocode_address, estimate_price_m2, get_dvf_transactions, get_dvf_history_10y
+from patrimoine_engine import generate_patrimoine_opinion
 from datetime import date, datetime
 
 api = Blueprint("api", __name__, url_prefix="/api")
@@ -109,6 +110,73 @@ def take_snapshot():
     db.session.add(snap)
     db.session.commit()
     return jsonify({"status": "ok", "snapshot": snap.to_dict()})
+
+
+# ─── PROFIL UTILISATEUR ───────────────────────────────────
+
+@api.route("/profile", methods=["GET"])
+def get_profile():
+    profile = UserProfile.query.first()
+    if not profile:
+        return jsonify({"exists": False})
+    return jsonify({"exists": True, "profile": profile.to_dict()})
+
+
+@api.route("/profile", methods=["POST"])
+def save_profile():
+    data = request.get_json()
+    profile = UserProfile.query.first()
+    if not profile:
+        profile = UserProfile()
+        db.session.add(profile)
+
+    import json
+    for key in ["prenom", "nom", "email", "age", "situation_familiale", "nb_enfants",
+                "nb_parts_fiscales", "regime_matrimonial", "revenu_net_annuel",
+                "revenu_foncier_annuel", "autres_revenus_annuel", "charges_fixes_mensuelles",
+                "tmi", "option_fiscale", "objectif_principal", "objectif_description",
+                "age_objectif", "montant_objectif", "profil_risque", "experience_investissement",
+                "horizon_global", "capacite_epargne_mensuelle", "epargne_precaution_mois",
+                "has_pea", "has_assurance_vie", "has_per", "has_cto",
+                "rgpd_consent"]:
+        if key in data:
+            setattr(profile, key, data[key])
+
+    if "banques" in data:
+        profile.banques = json.dumps(data["banques"]) if isinstance(data["banques"], list) else data["banques"]
+
+    for df in ["date_naissance", "pea_date_ouverture", "av_date_ouverture"]:
+        if df in data and data[df]:
+            setattr(profile, df, date.fromisoformat(data[df]))
+
+    if data.get("rgpd_consent"):
+        profile.rgpd_consent_date = datetime.utcnow()
+
+    db.session.commit()
+    return jsonify({"status": "ok", "profile": profile.to_dict()})
+
+
+@api.route("/profile", methods=["DELETE"])
+def delete_profile():
+    profile = UserProfile.query.first()
+    if profile:
+        db.session.delete(profile)
+        db.session.commit()
+    return jsonify({"status": "ok"})
+
+
+# ─── OPINION PATRIMOINE GLOBALE ──────────────────────────
+
+@api.route("/patrimoine/opinion")
+def patrimoine_opinion():
+    """Opinion de gestionnaire de patrimoine sur l'ensemble."""
+    profile = UserProfile.query.first()
+    if not profile:
+        return jsonify({"error": "Profil requis. Configurez votre profil d'abord."})
+
+    dashboard = get_dashboard().get_json()
+    opinion = generate_patrimoine_opinion(profile.to_dict(), dashboard)
+    return jsonify(opinion)
 
 
 # ─── GEOCODAGE + DVF ─────────────────────────────────────

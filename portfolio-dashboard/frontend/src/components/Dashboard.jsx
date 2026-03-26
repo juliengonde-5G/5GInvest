@@ -1,11 +1,17 @@
+import { useState, useEffect } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { TrendingUp, TrendingDown, Home, Bitcoin, Gem, Wallet, ArrowUpRight, ArrowDownRight, MoreHorizontal } from "lucide-react";
+import { TrendingUp, TrendingDown, Home, Bitcoin, Gem, Wallet, ArrowUpRight, ArrowDownRight, MoreHorizontal, Shield, AlertTriangle, Lightbulb, Target } from "lucide-react";
 
 const COLORS = { immo: "#8b5cf6", crypto: "#f59e0b", commodity: "#06b6d4", cash: "#10b981" };
 const LABELS = { immo: "Immobilier", crypto: "Crypto", commodity: "Commodities", cash: "Cash" };
 
 export default function Dashboard({ data, onNavigate }) {
   const { net_worth, allocation, real_estate, crypto, commodities, cash, history } = data;
+  const [opinion, setOpinion] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/patrimoine/opinion").then(r => r.json()).then(setOpinion).catch(() => {});
+  }, []);
 
   const pieData = [
     { name: "Immobilier", value: allocation.immo, color: COLORS.immo, pct: allocation.immo_pct },
@@ -59,6 +65,57 @@ export default function Dashboard({ data, onNavigate }) {
           onClick={() => onNavigate("cash")}
         />
       </div>
+
+      {/* ═══ PATRIMOINE OPINION ═══ */}
+      {opinion && !opinion.error && (
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Shield size={16} className={opinion.score_sante >= 60 ? "text-emerald-400" : opinion.score_sante >= 40 ? "text-amber-400" : "text-red-400"} />
+              <h3 className="text-sm font-semibold">Santé patrimoniale</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-2xl font-bold ${opinion.score_sante >= 60 ? "text-emerald-400" : opinion.score_sante >= 40 ? "text-amber-400" : "text-red-400"}`}>
+                {opinion.score_sante}
+              </span>
+              <span className="text-[10px] text-[#52525b]">/100 · {opinion.score_label}</span>
+            </div>
+          </div>
+
+          {/* Alertes */}
+          {opinion.alertes?.map((a, i) => (
+            <div key={i} className={`flex items-start gap-2 text-xs mb-2 p-2 rounded-lg ${a.niveau === "critique" ? "bg-red-500/10 text-red-400" : a.niveau === "important" ? "bg-amber-500/10 text-amber-400" : "bg-blue-500/10 text-blue-400"}`}>
+              <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+              <span>{a.message}</span>
+            </div>
+          ))}
+
+          {/* Opinions */}
+          {opinion.opinions?.slice(0, 3).map((o, i) => (
+            <div key={i} className="text-xs text-[#a1a1aa] py-1.5 border-b border-[#1c1c22] last:border-0">
+              <span className="font-medium text-white">{o.message}</span>
+              {o.detail && <div className="text-[10px] text-[#52525b] mt-0.5">{o.detail}</div>}
+            </div>
+          ))}
+
+          {/* Recommandations */}
+          {opinion.recommandations?.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-[#1c1c22]">
+              <div className="flex items-center gap-1 text-[10px] text-[#71717a] uppercase tracking-wide mb-2">
+                <Lightbulb size={10} /> Recommandations
+              </div>
+              {opinion.recommandations.slice(0, 3).map((r, i) => (
+                <div key={i} className="flex gap-2 text-[11px] text-[#a1a1aa] py-1">
+                  <Target size={10} className="text-violet-400 shrink-0 mt-0.5" />
+                  <span>{r}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="text-[9px] text-[#3f3f46] mt-3 italic">{opinion.disclaimer}</div>
+        </div>
+      )}
 
       {/* ═══ CHARTS ROW ═══ */}
       <div className="grid lg:grid-cols-5 gap-4">
