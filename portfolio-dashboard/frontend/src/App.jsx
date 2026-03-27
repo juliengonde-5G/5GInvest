@@ -9,7 +9,7 @@ import InvestmentView from "./components/InvestmentView";
 import ProfileView from "./components/ProfileView";
 import {
   LayoutDashboard, Home, Bitcoin, Gem, Wallet, Brain, RefreshCw, TrendingUp, User,
-  ChevronLeft, ChevronRight, Bell, Settings, LogOut, Search, Menu, X,
+  ChevronLeft, ChevronRight, Bell, Settings, LogOut, Search, Menu, X, Sun, Moon,
 } from "lucide-react";
 
 const API = "/api";
@@ -32,6 +32,27 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved) return saved === "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+
+  // Sync dark mode with <html> class
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    localStorage.setItem("theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  // Listen for system theme changes
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => {
+      if (!localStorage.getItem("theme")) setDarkMode(e.matches);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   useEffect(() => { loadDashboard(); }, []);
 
@@ -63,16 +84,16 @@ export default function App() {
   const sidebarW = sidebarCollapsed ? "w-16" : "w-60";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
       {/* ═══ SIDEBAR ═══ */}
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`
+      <aside style={{ background: "var(--bg-sidebar)", borderColor: "var(--border)" }} className={`
         fixed lg:relative inset-y-0 left-0 z-50 flex flex-col
-        bg-sidebar border-r border-sidebar-border
+        border-r
         transition-all duration-200 ease-in-out
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
         ${sidebarW}
@@ -122,7 +143,7 @@ export default function App() {
       {/* ═══ MAIN ═══ */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center justify-between h-14 px-4 border-b border-border shrink-0 bg-background">
+        <header className="flex items-center justify-between h-14 px-4 border-b shrink-0" style={{ background: "var(--bg)", borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-1.5 rounded-lg hover:bg-white/5">
               <Menu size={20} />
@@ -132,8 +153,11 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={loadDashboard} className="p-2 rounded-lg hover:bg-white/5 transition" title="Rafraîchir">
+            <button onClick={loadDashboard} className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition" title="Rafraîchir">
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition" title={darkMode ? "Mode clair" : "Mode sombre"}>
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
             </button>
             <button className="p-2 rounded-lg hover:bg-white/5 transition relative">
               <Bell size={16} />
