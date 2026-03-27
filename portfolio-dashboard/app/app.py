@@ -30,10 +30,13 @@ def create_app():
     CORS(app, origins=["https://dashboard.5ginvest.fr", "http://localhost:3000", "http://localhost:5051"],
          supports_credentials=True)
 
-    # OAuth
-    from auth import auth_bp, init_oauth
-    init_oauth(app)
-    app.register_blueprint(auth_bp)
+    # OAuth (optionnel — skip si pas configuré ou erreur d'import)
+    try:
+        from auth import auth_bp, init_oauth
+        init_oauth(app)
+        app.register_blueprint(auth_bp)
+    except Exception as e:
+        print(f"OAuth non chargé (mode solo): {e}")
 
     # Routes
     from routes import api

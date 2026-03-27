@@ -27,7 +27,10 @@ def get_dashboard():
     # Crypto
     crypto_positions = CryptoPosition.query.all()
     crypto_symbols = list(set(p.symbol for p in crypto_positions))
-    crypto_prices = get_crypto_prices(crypto_symbols) if crypto_symbols else {}
+    try:
+        crypto_prices = get_crypto_prices(crypto_symbols) if crypto_symbols else {}
+    except Exception:
+        crypto_prices = {}
     crypto_data = [p.to_dict(crypto_prices.get(p.symbol)) for p in crypto_positions]
     crypto_total = sum(d["current_value"] for d in crypto_data)
 
@@ -36,7 +39,10 @@ def get_dashboard():
     commodity_data = []
     commodity_total = 0
     for p in commodity_positions:
-        price = get_commodity_price(p.symbol)
+        try:
+            price = get_commodity_price(p.symbol)
+        except Exception:
+            price = None
         d = p.to_dict(price)
         commodity_data.append(d)
         commodity_total += d["current_value"]
@@ -778,7 +784,10 @@ def _recalculate_path(path):
 def list_crypto():
     positions = CryptoPosition.query.all()
     symbols = list(set(p.symbol for p in positions))
-    prices = get_crypto_prices(symbols) if symbols else {}
+    try:
+        prices = get_crypto_prices(symbols) if symbols else {}
+    except Exception:
+        prices = {}
     return jsonify([p.to_dict(prices.get(p.symbol)) for p in positions])
 
 
